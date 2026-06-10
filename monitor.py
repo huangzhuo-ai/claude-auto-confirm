@@ -9,6 +9,8 @@ import win32gui, win32con, win32api, win32process
 from win11toast import toast
 import terminal
 import config
+from applog import log
+from version import __version__
 
 
 def _find_inner_hwnd(top: int) -> int:
@@ -156,7 +158,7 @@ def _save_misfire(win: dict, text: str) -> str | None:
         path.write_text(header + text, encoding='utf-8')
         return str(path)
     except Exception as e:
-        print(f'  [WARN] 样本落盘失败: {e}')
+        log(f'  [WARN] 样本落盘失败: {e}')
         return None
 
 
@@ -177,7 +179,7 @@ def _tap_enter(hwnd: int) -> bool:
         _post_enter(hwnd, inner)
         return True
     except Exception as e:
-        print(f'  [WARN] PostMessage 失败: {e}')
+        log(f'  [WARN] PostMessage 失败: {e}')
         return False
 
 
@@ -209,7 +211,7 @@ def _bring_to_front(hwnd: int):
             for tid in attached:
                 win32process.AttachThreadInput(cur_tid, tid, False)
     except Exception as e:
-        print(f'  [WARN] 跳转窗口失败: {e}')
+        log(f'  [WARN] 跳转窗口失败: {e}')
 
 
 def _notify_async(title: str, body: str, hwnd: int):
@@ -221,7 +223,7 @@ def _notify_async(title: str, body: str, hwnd: int):
             toast(title, body, app_id='Claude Auto-Yes',
                   on_click=lambda *_a: _bring_to_front(hwnd))
         except Exception as e:
-            print(f'  [WARN] 通知失败: {e}')
+            log(f'  [WARN] 通知失败: {e}')
     threading.Thread(target=run, daemon=True).start()
 
 
@@ -354,7 +356,7 @@ def process(win: dict):
                 _idle_since[hwnd] = now
                 _set_state(win, 'idle')
             elif (now - t0) >= WAITING_NOTIFY_SECONDS and _last.get(hwnd) != ('idle',):
-                print(f'[WAITING]  [{kind}] hwnd={hwnd} 已空闲 {int(now - t0)}s，等你输入')
+                log(f'[WAITING]  [{kind}] hwnd={hwnd} 已空闲 {int(now - t0)}s，等你输入')
                 _notify_async(
                     f'Claude 在等你输入 [{kind}]',
                     f'{win["title"][:40]}\n已完成，空闲 {int(now - t0)}s',
@@ -378,7 +380,7 @@ def process(win: dict):
         if _last.get(hwnd) != ('yes', sig):
             if DRY_RUN or policy == 'notify':
                 tag = 'DRY-RUN' if DRY_RUN else '策略=notify'
-                print(f'[AUTO-YES][{tag} 不发键] [{kind}] hwnd={hwnd}')
+                log(f'[AUTO-YES][{tag} 不发键] [{kind}] hwnd={hwnd}')
                 _last[hwnd] = ('yes', sig)
                 # notify 策略：改为发通知
                 if policy == 'notify' and not DRY_RUN:
@@ -397,7 +399,7 @@ def process(win: dict):
                 r = send_enter(hwnd)
                 msg = {'ok': '✅已确认', 'still': '⚠发了回车但框还在',
                        'nofocus': '⚠无法切到该窗口'}.get(r, r)
-                print(f'[AUTO-YES] [{kind}] hwnd={hwnd} → {msg}')
+                log(f'[AUTO-YES] [{kind}] hwnd={hwnd} → {msg}')
                 if r == 'ok':
                     _last[hwnd] = ('yes', sig)
                     _set_state(win, 'confirmed', msg)
@@ -407,7 +409,7 @@ def process(win: dict):
     else:  # choice / error / unknown → 通知，绝不自动操作
         if _last.get(hwnd) != ('notify', sig):
             if kindp == 'error':
-                print(f'[ERROR]    [{kind}] hwnd={hwnd} Claude 遇到错误需处理')
+                log(f'[ERROR]    [{kind}] hwnd={hwnd} Claude 遇到错误需处理')
                 _notify_async(
                     f'Claude 遇到错误 [{kind}]',
                     f'{win["title"][:40]}\n{sig.strip()[-180:]}',
@@ -418,8 +420,8 @@ def process(win: dict):
             elif kindp == 'unknown':
                 # 看见确认框 footer 却无法分类 → 落盘样本 + 通知，绝不静默。
                 saved = _save_misfire(win, text)
-                print(f'[UNKNOWN]  [{kind}] hwnd={hwnd} 未知确认框'
-                      f'{"（已记录样本）" if saved else "（样本已存在）"}')
+                log(f'[UNKNOWN]  [{kind}] hwnd={hwnd} 未知确认框'
+                    f'{"（已记录样本）" if saved else "（样本已存在）"}')
                 _notify_async(
                     f'Claude 出现未知确认框 [{kind}]',
                     f'{win["title"][:40]}\n已记录样本，请手动处理并反馈',
@@ -428,7 +430,7 @@ def process(win: dict):
                 _set_state(win, 'unknown', sig.strip()[-80:])
                 _log_event(win, 'unknown', sig.strip()[-80:])
             else:
-                print(f'[NOTIFY]   [{kind}] hwnd={hwnd} 需要你选方案')
+                log(f'[NOTIFY]   [{kind}] hwnd={hwnd} 需要你选方案')
                 _notify_async(
                     f'Claude 需要你选方案 [{kind}]',
                     f'{win["title"][:40]}\n{sig.strip()[-180:]}',
@@ -472,8 +474,18 @@ def scan_once():
             process(w)
         except Exception as e:
             import traceback
-            print(f'\n[ERROR] hwnd={w["hwnd"]}: {e}')
-            traceback.print_exc()
+            log(f'[ERROR] hwnd={w["hwnd"]}: {e}')
+            log(traceback.format_exc())
+
+
+def _status(line: str):
+    """终端原地刷新状态行（每轮覆盖）。仅在有控制台时输出；
+    frozen 无控制台（sys.stdout is None）时静默跳过——这行高频刷新不该进 app.log。"""
+    if sys.stdout is not None:
+        try:
+            print(line, end='\r')
+        except Exception:
+            pass
 
 
 def scan_loop(stop_event=None, paused_event=None):
@@ -484,15 +496,15 @@ def scan_loop(stop_event=None, paused_event=None):
             return
         try:
             if PAUSED.is_set():
-                print('[PAUSED] 已暂停                    ', end='\r')
+                _status('[PAUSED] 已暂停                    ')
             else:
                 scan_once()
-                print(f'[SCAN] {STATS["windows"]} 个终端窗口 {STATS["kinds"]}        ', end='\r')
+                _status(f'[SCAN] {STATS["windows"]} 个终端窗口 {STATS["kinds"]}        ')
         except KeyboardInterrupt:
-            print('\n退出')
+            log('退出')
             sys.exit(0)
         except Exception as e:
-            print(f'[ERROR] {e}')
+            log(f'[ERROR] {e}')
         time.sleep(SCAN_INTERVAL)
 
 
@@ -506,14 +518,18 @@ def main():
     args = ap.parse_args()
     DRY_RUN = args.dry_run
 
-    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    if sys.stdout is not None:
+        try:
+            sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+        except Exception:
+            pass
     mode = ' [DRY-RUN：只检测不发键]' if DRY_RUN else ''
 
     if args.no_tray:
-        print(f'Claude Auto-Yes 启动（命令行模式）{mode}，扫描间隔 {SCAN_INTERVAL}s，Ctrl+C 退出\n')
+        log(f'Claude Auto-Yes v{__version__} 启动（命令行模式）{mode}，扫描间隔 {SCAN_INTERVAL}s，Ctrl+C 退出')
         scan_loop()
     else:
-        print(f'Claude Auto-Yes 启动（托盘模式）{mode}，扫描间隔 {SCAN_INTERVAL}s\n')
+        log(f'Claude Auto-Yes v{__version__} 启动（托盘模式）{mode}，扫描间隔 {SCAN_INTERVAL}s')
         import tray
         tray.run(DRY_RUN)
 

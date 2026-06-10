@@ -23,6 +23,7 @@ ENV/
 # 临时/调试输出
 _*.txt
 *.log
+app.log*
 
 # 漏报样本（含用户屏幕内容，绝不入库）
 misfires/

@@ -5,7 +5,7 @@ PyInstaller 打包配置。
 产物：      dist/claude-auto-confirm.exe（单文件）
 config.toml 不打进 exe，需与 exe 放同目录，用户可直接编辑（config.py 已兼容 frozen 路径）。
 
-console=True 便于首次排错看日志；确认无误后改 console=False 即为纯托盘无窗口模式。
+console=False：纯托盘无黑框。日志改由 applog 写到 app.log（与 exe 同目录），不依赖 stdout。
 """
 from PyInstaller.utils.hooks import collect_all
 
@@ -16,6 +16,10 @@ for pkg in ('win11toast', 'uiautomation', 'pystray'):
     datas += d
     binaries += b
     hiddenimports += h
+
+# 本项目的模块多为懒加载（panel 在 tray 里 import、tray 在 monitor.main 里 import），
+# PyInstaller 静态分析抓不到，必须显式声明，否则打包后「打开面板」会崩。
+hiddenimports += ['panel', 'tray', 'config', 'terminal', 'applog', 'version']
 
 a = Analysis(
     ['monitor.py'],
@@ -41,7 +45,8 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
-    console=True,
+    console=False,
     disable_windowed_traceback=False,
-    icon=None,
+    icon='icon.ico',
+    version='version_info.txt',
 )

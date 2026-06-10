@@ -38,6 +38,26 @@ Ctrl+C 退出。
 |------|------|
 | `monitor.py` | 主程序：扫描、检测、发键/通知 |
 | `terminal.py` | 终端窗口枚举 + UI Automation 屏幕读取 |
+| `panel.py` | 状态面板（tkinter）：实时表格 + 事件日志 + 单窗口策略 |
+| `tray.py` | 系统托盘：状态、打开面板、暂停、退出 |
+| `applog.py` | 日志：同时输出控制台与 `app.log`（打包后无控制台仍可排查） |
+
+## 打包 / 分发
+
+打包成单文件 exe（无控制台黑框、带图标与版本信息）：
+
+```powershell
+.\build.ps1
+```
+
+产物 `dist\claude-auto-confirm.exe`。**分发只需把 `claude-auto-confirm.exe` 与
+`config.toml` 放在同一目录**，双击 exe 即在后台常驻（托盘图标），无需安装 Python。
+
+运行时会在 exe 同目录生成：
+- `app.log`：运行日志（滚动，单文件上限 1MB）。
+- `misfires/`：遇到无法识别的确认框时落盘的样本（正常为空）。
+
+当前版本：见 `version.py` 的 `__version__`（同步 `version_info.txt`）。
 
 ## 工作原理
 
