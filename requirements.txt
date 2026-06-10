@@ -4,3 +4,5 @@ uiautomation==2.0.29
 psutil==5.9.0
 pystray==0.19.5
 pillow==10.4.0
+customtkinter==5.2.2
+darkdetect==0.8.0
