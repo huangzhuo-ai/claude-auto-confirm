@@ -55,11 +55,13 @@ NOTIFY_RE = re.compile(
     r'which .+ (would|do) you|select .+ option|choose .+:|pick .+:|enter .+ number',
     re.IGNORECASE
 )
-# Claude 卡在错误/需登录状态——需人工介入，只通知不回车
+# Claude 卡在错误/需登录状态——需人工介入，只通知不回车。
+# 注意：不收录过宽的裸词（如 "Authentication"），否则 git/ssh 等正常输出会误报；
+# 登录失效已由 "Please run /login" / "Invalid API key" 精确覆盖。
 ERROR_RE = re.compile(
     r'Please run /login|API Error|context (low|left)|超过 ?200K|已达.*限制'
     r'|Credit balance is too low|rate limit|usage limit reached'
-    r'|Invalid API key|Authentication',
+    r'|Invalid API key',
     re.IGNORECASE
 )
 
@@ -71,8 +73,9 @@ _last: dict[int, tuple] = {}        # 按 hwnd 去重
 _idle_since: dict[int, float] = {}  # hwnd → 进入空闲态的 time.monotonic()
 DRY_RUN = False                     # --dry-run 时只打印不发键
 
-# Claude Code 空闲等待输入：底部有 ❯ 提示符，且无运行标志也无确认框 footer
-IDLE_RE = re.compile(r'^\s*❯\s*$', re.MULTILINE)
+# Claude Code 空闲等待输入：底部输入框是一条「只有提示符」的行（> 或 ❯，
+# 后面无文字）。实测真实终端渲染为 '>'；用户正在打字时该行会跟着输入内容，不算空闲。
+IDLE_RE = re.compile(r'^\s*[>❯]\s*$', re.MULTILINE)
 
 # 供托盘 UI 读取的运行时状态
 STATS = {'windows': 0, 'kinds': {}, 'last_action': ''}
@@ -134,12 +137,21 @@ def _notify_async(title: str, body: str, hwnd: int):
     threading.Thread(target=run, daemon=True).start()
 
 
+# Claude Code 输入框/状态行的 footer 特征行——普通 shell 不会出现，
+# 是「这是 Claude 窗口」的强信号（即便回复滚走、底部只剩空输入框也成立）。
+CLAUDE_FOOTER_RE = re.compile(
+    r'for shortcuts|for agents|accept edits|esc to interrupt|to manage|shift\+tab to cycle',
+    re.IGNORECASE
+)
+
+
 def looks_like_claude(text: str) -> bool:
     """粗判该终端窗口里跑的是不是 claude（避免对无关终端发键）。
-    确认框出现时 Claude 状态栏可能已滚出可见区域，
-    故同时把「有确认框 footer」也纳入判据。"""
+    回复完滚走后底部可能只剩空输入框、无 claude 关键词，
+    故把 Claude 输入框/确认框的 footer 特征也纳入判据。"""
     return bool(re.search(r'claude|esc to interrupt|accept edits|tell Claude', text, re.I)
-                or PROMPT_FOOTER_RE.search(text))
+                or PROMPT_FOOTER_RE.search(text)
+                or CLAUDE_FOOTER_RE.search(text))
 
 
 def detect_prompt(text: str):
@@ -208,12 +220,18 @@ def _prompt_signature(text: str) -> str:
 
 
 def is_idle_waiting(text: str) -> bool:
-    """判断终端是否停在「空闲等待你输入」态：底部 6 行内有空的 ❯ 提示符，
-    且全屏没有运行中标志（esc to interrupt）。确认框 footer 已由调用方排除。"""
+    """判断终端是否停在「Claude 空闲等待你输入」态。需同时满足：
+      1) 没有运行中标志（esc to interrupt）；
+      2) 底部 6 行内有一条「只有提示符」的空输入框行（> 或 ❯，后无文字）；
+      3) 底部确为 Claude 输入框（有 CLAUDE_FOOTER 特征），排除普通 shell 的 '>'。
+    用户正在输入框打字时（> 后跟内容）不匹配空行，自然排除，不会打扰。"""
     if re.search(r'esc to interrupt', text, re.I):
         return False  # 正在跑，不算空闲
     lines = [l for l in text.splitlines() if l.strip() != '']
-    return any(IDLE_RE.match(l) for l in lines[-6:])
+    tail = lines[-6:]
+    has_empty_prompt = any(IDLE_RE.match(l) for l in tail)
+    is_claude_box = any(CLAUDE_FOOTER_RE.search(l) for l in tail)
+    return has_empty_prompt and is_claude_box
 
 
 def process(win: dict):
