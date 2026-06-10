@@ -43,7 +43,18 @@ def _is_paused(_item) -> bool:
 
 def _toggle_autostart(_icon, _item):
     import autostart
+    want_on = not autostart.is_enabled()  # 这次点击想开启?
     autostart.toggle()
+    # 想开启却没开成 = 被系统/安全软件拦截(enable 写后回读校验已判失败)
+    if want_on and not autostart.is_enabled():
+        try:
+            from win11toast import toast
+            toast('开机自启被拦截',
+                  '写入失败，疑被安全软件/系统管控清除。'
+                  '请把本程序加入白名单后重试。',
+                  app_id='Claude Auto-Yes')
+        except Exception:
+            pass
 
 
 def _is_autostart(_item) -> bool:

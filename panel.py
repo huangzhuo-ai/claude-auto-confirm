@@ -75,11 +75,21 @@ def _run_panel():
                    command=_toggle_dry).pack(side='left', padx=4)
 
     import autostart
+    from tkinter import messagebox
     auto_var = tk.BooleanVar(value=autostart.is_enabled())
 
     def _toggle_auto():
+        want_on = not autostart.is_enabled()  # 这次点击想开启?
         autostart.toggle()
-        auto_var.set(autostart.is_enabled())
+        ok = autostart.is_enabled()
+        auto_var.set(ok)
+        # 想开启却没开成 = 被系统/安全软件拦截(enable 写后回读校验已判失败)
+        if want_on and not ok:
+            messagebox.showwarning(
+                '开机自启被拦截',
+                '写入开机自启失败，疑被系统或安全软件(火绒/360/Defender/'
+                '企业管控等)拦截清除。\n\n'
+                '如需启用，请在安全软件里把本程序加入白名单/信任区后重试。')
 
     tk.Checkbutton(bar, text='🚀 开机自启', variable=auto_var,
                    command=_toggle_auto).pack(side='left', padx=4)
