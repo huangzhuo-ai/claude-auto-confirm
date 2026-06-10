@@ -7,6 +7,7 @@ import time, re, sys, argparse, threading
 import win32gui, win32con, win32api, win32process
 from win11toast import toast
 import terminal
+import config
 
 
 def _find_inner_hwnd(top: int) -> int:
@@ -62,9 +63,19 @@ ERROR_RE = re.compile(
     re.IGNORECASE
 )
 
-SCAN_INTERVAL = 1.5
-_last: dict[int, tuple] = {}   # 按 hwnd 去重
-DRY_RUN = False                # --dry-run 时只打印不发键
+CFG = config.load()
+SCAN_INTERVAL = CFG['scan_interval']
+WAITING_NOTIFY_SECONDS = CFG['waiting_notify_seconds']
+IGNORED_TITLES = CFG['ignored_titles']
+_last: dict[int, tuple] = {}        # 按 hwnd 去重
+_idle_since: dict[int, float] = {}  # hwnd → 进入空闲态的 time.monotonic()
+DRY_RUN = False                     # --dry-run 时只打印不发键
+
+# Claude Code 空闲等待输入：底部有 ❯ 提示符，且无运行标志也无确认框 footer
+IDLE_RE = re.compile(r'^\s*❯\s*$', re.MULTILINE)
+
+# 供托盘 UI 读取的运行时状态
+STATS = {'windows': 0, 'kinds': {}, 'last_action': ''}
 
 
 def _tap_enter(hwnd: int) -> bool:
@@ -196,14 +207,42 @@ def _prompt_signature(text: str) -> str:
     return '\n'.join(body)[-300:]
 
 
+def is_idle_waiting(text: str) -> bool:
+    """判断终端是否停在「空闲等待你输入」态：底部 6 行内有空的 ❯ 提示符，
+    且全屏没有运行中标志（esc to interrupt）。确认框 footer 已由调用方排除。"""
+    if re.search(r'esc to interrupt', text, re.I):
+        return False  # 正在跑，不算空闲
+    lines = [l for l in text.splitlines() if l.strip() != '']
+    return any(IDLE_RE.match(l) for l in lines[-6:])
+
+
 def process(win: dict):
     hwnd, kind = win['hwnd'], win['kind']
     text = terminal.read_window_text(hwnd, rows=40)
     if not text or not looks_like_claude(text):
+        _idle_since.pop(hwnd, None)
         return
     kindp = detect_prompt(text)
     if not kindp:
+        # 无确认框：检测「空闲等待输入」是否已持续超过阈值，是则通知一次
+        if is_idle_waiting(text):
+            now = time.monotonic()
+            t0 = _idle_since.get(hwnd)
+            if t0 is None:
+                _idle_since[hwnd] = now
+            elif (now - t0) >= WAITING_NOTIFY_SECONDS and _last.get(hwnd) != ('idle',):
+                print(f'[WAITING]  [{kind}] hwnd={hwnd} 已空闲 {int(now - t0)}s，等你输入')
+                _notify_async(
+                    f'Claude 在等你输入 [{kind}]',
+                    f'{win["title"][:40]}\n已完成，空闲 {int(now - t0)}s',
+                    hwnd,
+                )
+                _last[hwnd] = ('idle',)
+        else:
+            _idle_since.pop(hwnd, None)  # 又开始跑了，重置计时
         return
+    # 有活动确认框：清掉空闲计时
+    _idle_since.pop(hwnd, None)
     sig = _prompt_signature(text)
 
     if kindp == 'yes':
@@ -238,42 +277,77 @@ def process(win: dict):
             _last[hwnd] = ('notify', sig)
 
 
-def main():
-    global DRY_RUN
-    ap = argparse.ArgumentParser(description='Claude Code Auto-Yes Monitor')
-    ap.add_argument('--dry-run', action='store_true',
-                    help='只检测并打印，不真正发送按键')
-    args = ap.parse_args()
-    DRY_RUN = args.dry_run
+def _is_ignored(title: str) -> bool:
+    """窗口标题含任一 IGNORED_TITLES 子串时跳过（不监控、不通知）。"""
+    return any(s and s in title for s in IGNORED_TITLES)
 
-    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
-    mode = ' [DRY-RUN：只检测不发键]' if DRY_RUN else ''
-    print(f'Claude Auto-Yes 启动（窗口模式）{mode}，扫描间隔 {SCAN_INTERVAL}s，Ctrl+C 退出\n')
-    while True:
+
+def scan_once():
+    """扫描一轮所有终端窗口并处理。更新 STATS 供托盘读取。"""
+    wins = [w for w in terminal.list_terminal_windows()
+            if not _is_ignored(w['title'])]
+    kinds = {}
+    for w in wins:
+        kinds[w['kind']] = kinds.get(w['kind'], 0) + 1
+    STATS['windows'] = len(wins)
+    STATS['kinds'] = kinds
+    # 清理已关闭窗口的去重记录与空闲计时
+    alive = {w['hwnd'] for w in wins}
+    for h in list(_last):
+        if h not in alive:
+            _last.pop(h, None)
+    for h in list(_idle_since):
+        if h not in alive:
+            _idle_since.pop(h, None)
+    for w in wins:
         try:
-            wins = terminal.list_terminal_windows()
-            kinds = {}
-            for w in wins:
-                kinds[w['kind']] = kinds.get(w['kind'], 0) + 1
-            print(f'[SCAN] {len(wins)} 个终端窗口 {kinds}        ', end='\r')
-            # 清理已关闭窗口的去重记录
-            alive = {w['hwnd'] for w in wins}
-            for h in list(_last):
-                if h not in alive:
-                    _last.pop(h, None)
-            for w in wins:
-                try:
-                    process(w)
-                except Exception as e:
-                    import traceback
-                    print(f'\n[ERROR] hwnd={w["hwnd"]}: {e}')
-                    traceback.print_exc()
+            process(w)
+        except Exception as e:
+            import traceback
+            print(f'\n[ERROR] hwnd={w["hwnd"]}: {e}')
+            traceback.print_exc()
+
+
+def scan_loop(stop_event=None, paused_event=None):
+    """循环扫描。stop_event 置位时退出；paused_event 置位时跳过处理（暂停）。
+    两个参数都为 None 时退化为 v1 的纯循环（Ctrl+C 退出）。"""
+    while True:
+        if stop_event is not None and stop_event.is_set():
+            return
+        try:
+            if paused_event is not None and paused_event.is_set():
+                print('[PAUSED] 已暂停                    ', end='\r')
+            else:
+                scan_once()
+                print(f'[SCAN] {STATS["windows"]} 个终端窗口 {STATS["kinds"]}        ', end='\r')
         except KeyboardInterrupt:
             print('\n退出')
             sys.exit(0)
         except Exception as e:
             print(f'[ERROR] {e}')
         time.sleep(SCAN_INTERVAL)
+
+
+def main():
+    global DRY_RUN
+    ap = argparse.ArgumentParser(description='Claude Code Auto-Yes Monitor')
+    ap.add_argument('--dry-run', action='store_true',
+                    help='只检测并打印，不真正发送按键')
+    ap.add_argument('--no-tray', action='store_true',
+                    help='不启用系统托盘，退化为纯命令行模式')
+    args = ap.parse_args()
+    DRY_RUN = args.dry_run
+
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    mode = ' [DRY-RUN：只检测不发键]' if DRY_RUN else ''
+
+    if args.no_tray:
+        print(f'Claude Auto-Yes 启动（命令行模式）{mode}，扫描间隔 {SCAN_INTERVAL}s，Ctrl+C 退出\n')
+        scan_loop()
+    else:
+        print(f'Claude Auto-Yes 启动（托盘模式）{mode}，扫描间隔 {SCAN_INTERVAL}s\n')
+        import tray
+        tray.run(DRY_RUN)
 
 
 if __name__ == '__main__':

@@ -1,0 +1,31 @@
+"""配置加载：从 config.toml 读取，缺失项用默认值补齐。"""
+import tomllib
+import pathlib
+
+DEFAULTS = {
+    'scan_interval': 1.5,          # 扫描间隔（秒）
+    'waiting_notify_seconds': 15,  # 等待输入持续多久触发通知
+    'ignored_titles': [],          # 忽略含这些字串的窗口标题
+}
+
+
+def _config_path() -> pathlib.Path:
+    """config.toml 与可执行文件/脚本同目录（兼容 PyInstaller 打包）。"""
+    import sys
+    if getattr(sys, 'frozen', False):
+        base = pathlib.Path(sys.executable).parent
+    else:
+        base = pathlib.Path(__file__).parent
+    return base / 'config.toml'
+
+
+def load() -> dict:
+    p = _config_path()
+    if p.exists():
+        try:
+            with p.open('rb') as f:
+                user = tomllib.load(f)
+            return {**DEFAULTS, **user}
+        except Exception as e:
+            print(f'[WARN] 读取 config.toml 失败，用默认配置: {e}')
+    return DEFAULTS.copy()

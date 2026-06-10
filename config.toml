@@ -1,0 +1,15 @@
+# claude-auto-confirm 配置文件
+# 修改后重启程序生效
+
+# 扫描间隔（秒）。越小响应越快，但 CPU 占用略高
+scan_interval = 1.5
+
+# 「等待你输入」状态持续多久（秒）才发通知。避免 Claude 刚回复完的瞬间误报
+waiting_notify_seconds = 15
+
+# 忽略的窗口：标题中含有以下任一字串的终端，不监控、不通知
+# 例如把运行本程序自己的终端、或不想被打扰的窗口加进来
+ignored_titles = [
+    # "monitor.py",
+    # "我的私人终端",
+]

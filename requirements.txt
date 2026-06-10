@@ -1,0 +1,6 @@
+pywin32==311
+win11toast==0.36.3
+uiautomation==2.0.29
+psutil==5.9.0
+pystray==0.19.5
+pillow==10.4.0
