@@ -41,6 +41,16 @@ def _is_paused(_item) -> bool:
     return monitor.PAUSED.is_set()
 
 
+def _toggle_autostart(_icon, _item):
+    import autostart
+    autostart.toggle()
+
+
+def _is_autostart(_item) -> bool:
+    import autostart
+    return autostart.is_enabled()
+
+
 def _open_panel(_icon, _item):
     import panel
     panel.open_panel()
@@ -62,6 +72,7 @@ def run(dry_run: bool = False):
         pystray.Menu.SEPARATOR,
         pystray.MenuItem('打开面板', _open_panel),
         pystray.MenuItem('暂停', _toggle_pause, checked=_is_paused),
+        pystray.MenuItem('开机自启', _toggle_autostart, checked=_is_autostart),
         pystray.MenuItem('退出', _quit),
     )
     icon = pystray.Icon(

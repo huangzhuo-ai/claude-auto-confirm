@@ -74,6 +74,16 @@ def _run_panel():
     tk.Checkbutton(bar, text='🧪 干跑（只检测不发键）', variable=dry_var,
                    command=_toggle_dry).pack(side='left', padx=4)
 
+    import autostart
+    auto_var = tk.BooleanVar(value=autostart.is_enabled())
+
+    def _toggle_auto():
+        autostart.toggle()
+        auto_var.set(autostart.is_enabled())
+
+    tk.Checkbutton(bar, text='🚀 开机自启', variable=auto_var,
+                   command=_toggle_auto).pack(side='left', padx=4)
+
     tk.Label(bar, text='选中行后设策略：').pack(side='left', padx=(16, 2))
     for label, policy in [('自动确认', 'auto'), ('仅通知', 'notify'), ('忽略', 'ignore')]:
         tk.Button(bar, text=label,
