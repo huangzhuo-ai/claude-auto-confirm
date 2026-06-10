@@ -515,6 +515,8 @@ def main():
                     help='只检测并打印，不真正发送按键')
     ap.add_argument('--no-tray', action='store_true',
                     help='不启用系统托盘，退化为纯命令行模式')
+    ap.add_argument('--allow-multi', action='store_true',
+                    help='允许多开（跳过单实例锁，调试用）')
     args = ap.parse_args()
     DRY_RUN = args.dry_run
 
@@ -523,6 +525,21 @@ def main():
             sys.stdout.reconfigure(encoding='utf-8', errors='replace')
         except Exception:
             pass
+
+    # 单实例锁：开机自启 + 手动双击可能拉起两个进程，两者会抢着发回车。
+    # 拿不到锁说明已有实例在跑，提示后退出。--allow-multi 可跳过（调试用）。
+    if not args.allow_multi:
+        import singleton
+        if not singleton.acquire():
+            log('已有一个 Claude Auto-Yes 实例在运行，本次启动退出。'
+                '（如需多开请加 --allow-multi）')
+            if not args.no_tray:
+                try:
+                    toast('Claude Auto-Yes', '已有一个实例在运行，本次启动已退出')
+                except Exception:
+                    pass
+            sys.exit(0)
+
     mode = ' [DRY-RUN：只检测不发键]' if DRY_RUN else ''
 
     if args.no_tray:
