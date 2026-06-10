@@ -118,6 +118,48 @@ def set_policy(hwnd: int, policy: str):
         _policy[hwnd] = policy
 
 
+# ── 漏报样本落盘 ──────────────────────────────────────────────
+# 「看见确认框 footer 却无法分类」时，把整屏文本存成样本，供改版排查与回归测试。
+_misfire_sigs: set[str] = set()  # 已落盘的内容签名，跨轮去重
+
+
+def _misfires_dir():
+    """样本目录：与可执行文件/脚本同目录下的 misfires/（兼容 PyInstaller frozen）。"""
+    import pathlib
+    if getattr(sys, 'frozen', False):
+        base = pathlib.Path(sys.executable).parent
+    else:
+        base = pathlib.Path(__file__).parent
+    return base / 'misfires'
+
+
+def _save_misfire(win: dict, text: str) -> str | None:
+    """落盘一个未知确认框样本（带内容去重）。返回文件路径，跳过则 None。"""
+    sig = _prompt_signature(text)
+    if sig in _misfire_sigs:
+        return None
+    if len(_misfire_sigs) > 200:   # 极端防膨胀，正常用不到
+        _misfire_sigs.clear()
+    _misfire_sigs.add(sig)
+    try:
+        d = _misfires_dir()
+        d.mkdir(parents=True, exist_ok=True)
+        ts = time.strftime('%Y%m%d-%H%M%S')
+        path = d / f'{ts}-{win["hwnd"]}.txt'
+        header = (
+            f'# kind: {win["kind"]}\n'
+            f'# title: {win["title"]}\n'
+            f'# time: {time.strftime("%Y-%m-%d %H:%M:%S")}\n'
+            f'# reason: footer matched but classification fell through\n'
+            f'----\n'
+        )
+        path.write_text(header + text, encoding='utf-8')
+        return str(path)
+    except Exception as e:
+        print(f'  [WARN] 样本落盘失败: {e}')
+        return None
+
+
 def _set_state(win: dict, state: str, detail: str = ''):
     """记录某窗口的最新状态，供状态面板读取。"""
     _win_state[win['hwnd']] = {
@@ -202,7 +244,8 @@ def looks_like_claude(text: str) -> bool:
 
 def detect_prompt(text: str):
     """判定当前屏幕**底部**是否有活动的确认框。
-    返回 'yes' (默认选中Yes，可自动回车) | 'choice' (需人工选) | None。
+    返回 'yes' (默认选中Yes，可自动回车) | 'choice' (需人工选)
+        | 'error' (卡死需人工) | 'unknown' (有框但不认识，落盘+通知) | None (无框)。
 
     关键：确认框必须紧贴屏幕底部——footer(Esc to cancel等)在最后 2 行内，
     否则就是已翻篇、滚到历史里的残留，不能误判。
@@ -229,7 +272,12 @@ def detect_prompt(text: str):
     if not (has_yes1 or has_proceed):
         # 没有标准确认问句，但有编号选项 → AskUserQuestion 风格菜单，需人工
         has_numbered_opts = any(re.match(r'\s*[>❯]?\s*\d+\.', l) for l in window)
-        return 'choice' if has_numbered_opts else None
+        if has_numbered_opts:
+            return 'choice'
+        # footer 命中（确实是个确认框）却无任何可识别菜单/问句 → 未知框。
+        # 这是 Claude Code 改版后会掉进来的「沉默裂缝」：旧代码此处 return None，
+        # 工具静默不动作；现改为 unknown，落盘样本 + 通知，绝不静默失效。
+        return 'unknown'
     # 选项里是否含「实质性选择」——多个非 Yes/No 的有意义选项 → 需人工
     opts = [l for l in window if re.match(r'\s*[>❯]?\s*\d+\.', l)]
     nontrivial = [l for l in opts
@@ -356,7 +404,7 @@ def process(win: dict):
                     _log_event(win, 'auto_yes', sig.strip()[-80:])
                 else:
                     _set_state(win, 'prompt', msg)
-    else:  # choice / error → 通知，不自动操作
+    else:  # choice / error / unknown → 通知，绝不自动操作
         if _last.get(hwnd) != ('notify', sig):
             if kindp == 'error':
                 print(f'[ERROR]    [{kind}] hwnd={hwnd} Claude 遇到错误需处理')
@@ -367,6 +415,18 @@ def process(win: dict):
                 )
                 _set_state(win, 'error', sig.strip()[-80:])
                 _log_event(win, 'error', sig.strip()[-80:])
+            elif kindp == 'unknown':
+                # 看见确认框 footer 却无法分类 → 落盘样本 + 通知，绝不静默。
+                saved = _save_misfire(win, text)
+                print(f'[UNKNOWN]  [{kind}] hwnd={hwnd} 未知确认框'
+                      f'{"（已记录样本）" if saved else "（样本已存在）"}')
+                _notify_async(
+                    f'Claude 出现未知确认框 [{kind}]',
+                    f'{win["title"][:40]}\n已记录样本，请手动处理并反馈',
+                    hwnd,
+                )
+                _set_state(win, 'unknown', sig.strip()[-80:])
+                _log_event(win, 'unknown', sig.strip()[-80:])
             else:
                 print(f'[NOTIFY]   [{kind}] hwnd={hwnd} 需要你选方案')
                 _notify_async(

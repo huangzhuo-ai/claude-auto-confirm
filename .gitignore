@@ -24,6 +24,9 @@ ENV/
 _*.txt
 *.log
 
+# 漏报样本（含用户屏幕内容，绝不入库）
+misfires/
+
 # 系统
 Thumbs.db
 desktop.ini

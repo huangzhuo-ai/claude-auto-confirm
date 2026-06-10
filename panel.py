@@ -17,12 +17,14 @@ _STATE_ICONS = {
     'confirmed':     '✅ 已自动确认',
     'prompt':        '🔴 需处理',
     'error':         '❌ 错误',
+    'unknown':       '⚠️ 未知确认框',
     'ignored':       '⚫ 已忽略',
 }
 _ACTION_LABELS = {
     'auto_yes': '✅ 自动确认',
     'notify':   '🔔 已通知',
     'error':    '❌ 错误通知',
+    'unknown':  '⚠️ 未知框(已记录)',
     'idle':     '🟠 空闲通知',
 }
 
@@ -77,6 +79,9 @@ def _run_panel():
         tk.Button(bar, text=label,
                   command=lambda p=policy: _set_selected_policy(tree, p)
                   ).pack(side='left', padx=2)
+
+    tk.Button(bar, text='📁 样本目录', command=_open_misfires_dir
+              ).pack(side='right', padx=4)
 
     # ── 窗口状态表格 ───────────────────────────────────────────
     cols = ('kind', 'title', 'policy', 'state', 'detail', 'ts')
@@ -187,3 +192,15 @@ def _set_selected_policy(tree: ttk.Treeview, policy: str):
             tree.item(item, values=vals)
     except Exception:
         pass
+
+
+def _open_misfires_dir():
+    """在资源管理器打开漏报样本目录（不存在则先创建）。"""
+    import os
+    d = monitor._misfires_dir()
+    try:
+        d.mkdir(parents=True, exist_ok=True)
+        os.startfile(str(d))   # Windows 专用：用默认程序（资源管理器）打开
+    except Exception:
+        pass
+
