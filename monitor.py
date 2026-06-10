@@ -4,6 +4,7 @@ Claude Code Auto-Yes Monitor
 统一支持 Windows Terminal / 独立 PowerShell·CMD / VS Code 集成终端。
 """
 import time, re, sys, argparse, threading
+from collections import deque
 import win32gui, win32con, win32api, win32process
 from win11toast import toast
 import terminal
@@ -77,8 +78,53 @@ DRY_RUN = False                     # --dry-run 时只打印不发键
 # 后面无文字）。实测真实终端渲染为 '>'；用户正在打字时该行会跟着输入内容，不算空闲。
 IDLE_RE = re.compile(r'^\s*[>❯]\s*$', re.MULTILINE)
 
-# 供托盘 UI 读取的运行时状态
-STATS = {'windows': 0, 'kinds': {}, 'last_action': ''}
+# 供托盘 UI 读取的运行时状态。
+# windows/kinds：本轮扫描概览；rows：每个窗口的明细行（供面板表格渲染）。
+# rows 每项：{hwnd, kind, title, state, detail, ts}
+#   state ∈ running|idle|prompt|error|confirmed|idle_notified|watching
+STATS = {'windows': 0, 'kinds': {}, 'last_action': '', 'rows': []}
+_win_state: dict[int, dict] = {}  # hwnd → 该窗口最新状态（跨轮保留，供 UI 持续显示）
+
+# 事件日志环形缓冲：每次实际动作（自动确认/通知/错误/空闲通知）追加一条，供面板倒序展示。
+EVENTS: deque = deque(maxlen=200)
+
+# 单窗口策略：hwnd → 'auto' | 'notify' | 'ignore'。缺省 'auto'（现有行为）。
+#   auto   ：自动确认 yes 框，choice/error 通知（默认）
+#   notify ：即便遇到默认选中 Yes 的框也不回车，改为通知
+#   ignore ：完全跳过该窗口（不读屏、不通知）
+_policy: dict[int, str] = {}
+
+# 全局暂停开关：tray 与 panel 共用同一个 Event（从 tray 迁来，集中到 monitor）。
+PAUSED = threading.Event()
+
+
+def _log_event(win: dict, action: str, detail: str = ''):
+    """追加一条事件到环形缓冲。action ∈ auto_yes|notify|error|idle。"""
+    EVENTS.append({
+        'ts': time.time(), 'hwnd': win['hwnd'], 'kind': win['kind'],
+        'title': win['title'], 'action': action, 'detail': detail,
+    })
+
+
+def get_policy(hwnd: int) -> str:
+    return _policy.get(hwnd, 'auto')
+
+
+def set_policy(hwnd: int, policy: str):
+    """面板调用：设置单窗口策略。policy ∈ auto|notify|ignore。"""
+    if policy == 'auto':
+        _policy.pop(hwnd, None)
+    else:
+        _policy[hwnd] = policy
+
+
+def _set_state(win: dict, state: str, detail: str = ''):
+    """记录某窗口的最新状态，供状态面板读取。"""
+    _win_state[win['hwnd']] = {
+        'hwnd': win['hwnd'], 'kind': win['kind'],
+        'title': win['title'], 'state': state, 'detail': detail,
+        'ts': time.time(),
+    }
 
 
 def _tap_enter(hwnd: int) -> bool:
@@ -236,10 +282,20 @@ def is_idle_waiting(text: str) -> bool:
 
 def process(win: dict):
     hwnd, kind = win['hwnd'], win['kind']
+
+    # 单窗口策略：ignore → 完全跳过
+    policy = get_policy(hwnd)
+    if policy == 'ignore':
+        _set_state(win, 'ignored')
+        _idle_since.pop(hwnd, None)
+        return
+
     text = terminal.read_window_text(hwnd, rows=40)
     if not text or not looks_like_claude(text):
         _idle_since.pop(hwnd, None)
+        _win_state.pop(hwnd, None)
         return
+
     kindp = detect_prompt(text)
     if not kindp:
         # 无确认框：检测「空闲等待输入」是否已持续超过阈值，是则通知一次
@@ -248,6 +304,7 @@ def process(win: dict):
             t0 = _idle_since.get(hwnd)
             if t0 is None:
                 _idle_since[hwnd] = now
+                _set_state(win, 'idle')
             elif (now - t0) >= WAITING_NOTIFY_SECONDS and _last.get(hwnd) != ('idle',):
                 print(f'[WAITING]  [{kind}] hwnd={hwnd} 已空闲 {int(now - t0)}s，等你输入')
                 _notify_async(
@@ -256,26 +313,49 @@ def process(win: dict):
                     hwnd,
                 )
                 _last[hwnd] = ('idle',)
+                _set_state(win, 'idle_notified', f'空闲 {int(now - t0)}s')
+                _log_event(win, 'idle', f'空闲 {int(now - t0)}s')
+            else:
+                _set_state(win, 'idle')
         else:
             _idle_since.pop(hwnd, None)  # 又开始跑了，重置计时
+            _set_state(win, 'running')
         return
+
     # 有活动确认框：清掉空闲计时
     _idle_since.pop(hwnd, None)
     sig = _prompt_signature(text)
 
     if kindp == 'yes':
         if _last.get(hwnd) != ('yes', sig):
-            if DRY_RUN:
-                print(f'[AUTO-YES][DRY-RUN 不发键] [{kind}] hwnd={hwnd}')
+            if DRY_RUN or policy == 'notify':
+                tag = 'DRY-RUN' if DRY_RUN else '策略=notify'
+                print(f'[AUTO-YES][{tag} 不发键] [{kind}] hwnd={hwnd}')
                 _last[hwnd] = ('yes', sig)
+                # notify 策略：改为发通知
+                if policy == 'notify' and not DRY_RUN:
+                    if _last.get(hwnd) != ('notify', sig):
+                        _notify_async(
+                            f'Claude 需要确认 [{kind}]（仅通知模式）',
+                            f'{win["title"][:40]}\n{sig.strip()[-180:]}',
+                            hwnd,
+                        )
+                        _last[hwnd] = ('notify', sig)
+                        _set_state(win, 'prompt', '仅通知模式')
+                        _log_event(win, 'notify', '仅通知模式')
+                else:
+                    _set_state(win, 'prompt', tag)
             else:
                 r = send_enter(hwnd)
                 msg = {'ok': '✅已确认', 'still': '⚠发了回车但框还在',
                        'nofocus': '⚠无法切到该窗口'}.get(r, r)
                 print(f'[AUTO-YES] [{kind}] hwnd={hwnd} → {msg}')
-                # 成功才记忆去重；失败下轮重试
                 if r == 'ok':
                     _last[hwnd] = ('yes', sig)
+                    _set_state(win, 'confirmed', msg)
+                    _log_event(win, 'auto_yes', sig.strip()[-80:])
+                else:
+                    _set_state(win, 'prompt', msg)
     else:  # choice / error → 通知，不自动操作
         if _last.get(hwnd) != ('notify', sig):
             if kindp == 'error':
@@ -285,6 +365,8 @@ def process(win: dict):
                     f'{win["title"][:40]}\n{sig.strip()[-180:]}',
                     hwnd,
                 )
+                _set_state(win, 'error', sig.strip()[-80:])
+                _log_event(win, 'error', sig.strip()[-80:])
             else:
                 print(f'[NOTIFY]   [{kind}] hwnd={hwnd} 需要你选方案')
                 _notify_async(
@@ -292,6 +374,8 @@ def process(win: dict):
                     f'{win["title"][:40]}\n{sig.strip()[-180:]}',
                     hwnd,
                 )
+                _set_state(win, 'prompt', sig.strip()[-80:])
+                _log_event(win, 'notify', sig.strip()[-80:])
             _last[hwnd] = ('notify', sig)
 
 
@@ -309,7 +393,7 @@ def scan_once():
         kinds[w['kind']] = kinds.get(w['kind'], 0) + 1
     STATS['windows'] = len(wins)
     STATS['kinds'] = kinds
-    # 清理已关闭窗口的去重记录与空闲计时
+    # 清理已关闭窗口的去重记录、空闲计时、状态与策略
     alive = {w['hwnd'] for w in wins}
     for h in list(_last):
         if h not in alive:
@@ -317,6 +401,12 @@ def scan_once():
     for h in list(_idle_since):
         if h not in alive:
             _idle_since.pop(h, None)
+    for h in list(_win_state):
+        if h not in alive:
+            _win_state.pop(h, None)
+    for h in list(_policy):
+        if h not in alive:
+            _policy.pop(h, None)
     for w in wins:
         try:
             process(w)
@@ -327,13 +417,13 @@ def scan_once():
 
 
 def scan_loop(stop_event=None, paused_event=None):
-    """循环扫描。stop_event 置位时退出；paused_event 置位时跳过处理（暂停）。
-    两个参数都为 None 时退化为 v1 的纯循环（Ctrl+C 退出）。"""
+    """循环扫描。stop_event 置位时退出；paused_event 兼容旧签名但已弃用——
+    统一改用模块级 PAUSED Event（tray / panel 共用）。"""
     while True:
         if stop_event is not None and stop_event.is_set():
             return
         try:
-            if paused_event is not None and paused_event.is_set():
+            if PAUSED.is_set():
                 print('[PAUSED] 已暂停                    ', end='\r')
             else:
                 scan_once()
