@@ -32,3 +32,6 @@ misfires/
 Thumbs.db
 desktop.ini
 .DS_Store
+
+# 可视化伴侣临时文件
+.superpowers/
