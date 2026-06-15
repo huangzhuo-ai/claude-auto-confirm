@@ -81,7 +81,8 @@ def run(dry_run: bool = False):
     menu = pystray.Menu(
         pystray.MenuItem(_status_text, None, enabled=False),
         pystray.Menu.SEPARATOR,
-        pystray.MenuItem('打开面板', _open_panel),
+        # default=True：设为默认项，Windows 下双击托盘图标即触发「打开面板」
+        pystray.MenuItem('打开面板', _open_panel, default=True),
         pystray.MenuItem('暂停', _toggle_pause, checked=_is_paused),
         pystray.MenuItem('开机自启', _toggle_autostart, checked=_is_autostart),
         pystray.MenuItem('退出', _quit),

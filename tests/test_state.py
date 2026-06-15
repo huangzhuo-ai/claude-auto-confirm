@@ -122,3 +122,46 @@ def test_policy_auto_removes_persisted(tmp_path, monkeypatch):
     assert 'win-A' not in monitor._persisted_policies
 
 
+# ── 持久化开关（persist_policies）─────────────────────────────────
+def test_set_policy_no_persist_when_disabled(tmp_path, monkeypatch):
+    """开关关闭时：set_policy 仍设会话内策略，但不写盘。"""
+    import types
+    import config
+    sys.modules.setdefault('win11toast', types.SimpleNamespace(toast=lambda *a, **k: None))
+    import monitor
+
+    p = tmp_path / 'state.json'
+    monkeypatch.setattr(state, '_state_path', lambda: p)
+    monkeypatch.setattr(config, 'load',
+                        lambda: {**config.DEFAULTS, 'persist_policies': False})
+    monitor._policy.clear()
+    monitor._persisted_policies.clear()
+
+    monitor.set_policy(5, 'ignore', title='win-B')
+    # 会话内仍生效
+    assert monitor.resolve_policy(5, 'win-B') == 'ignore'
+    # 但不写持久化
+    assert 'win-B' not in monitor._persisted_policies
+    assert not p.exists() or 'policies' not in state.load()
+
+
+def test_load_policies_skipped_when_disabled(tmp_path, monkeypatch):
+    """开关关闭时：load_policies 不读盘，已存档的策略不恢复。"""
+    import types
+    import config
+    sys.modules.setdefault('win11toast', types.SimpleNamespace(toast=lambda *a, **k: None))
+    import monitor
+
+    p = tmp_path / 'state.json'
+    monkeypatch.setattr(state, '_state_path', lambda: p)
+    # 盘上有存档
+    state.save({'policies': {'win-C': 'ignore'}})
+    monkeypatch.setattr(config, 'load',
+                        lambda: {**config.DEFAULTS, 'persist_policies': False})
+    monitor._persisted_policies.clear()
+
+    monitor.load_policies()
+    assert 'win-C' not in monitor._persisted_policies
+
+
+

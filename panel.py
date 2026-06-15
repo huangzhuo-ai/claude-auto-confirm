@@ -371,6 +371,29 @@ def _build_settings_page(frame):
 
     ctk.CTkButton(quiet_row, text='保存', width=60, command=_save_quiet).pack(side='left', padx=(8, 0))
 
+    # ── 单窗口策略 ──
+    ctk.CTkLabel(frame, text='单窗口策略',
+                 font=ctk.CTkFont(size=14, weight='bold')).pack(anchor='w', pady=(16, 0))
+    ctk.CTkLabel(frame, text='记住每个窗口的策略（自动确认/仅通知/忽略），'
+                 '按窗口标题持久化，重启后标题匹配的窗口自动套用',
+                 font=ctk.CTkFont(size=11), text_color='gray',
+                 wraplength=560, justify='left').pack(anchor='w', pady=(2, 4))
+
+    persist_sw = ctk.CTkSwitch(frame, text='持久化单窗口策略（关闭则仅本次运行有效，重启即忘）')
+    persist_sw.pack(anchor='w', pady=4)
+    if cfg.get('persist_policies', True):
+        persist_sw.select()
+
+    def _toggle_persist():
+        on = bool(persist_sw.get())
+        cfg['persist_policies'] = on
+        config.save(cfg)
+        if on:
+            monitor.load_policies()      # 重新从盘加载，立即套用
+        else:
+            monitor._persisted_policies.clear()  # 关闭：清掉持久态，仅留会话内策略
+    persist_sw.configure(command=_toggle_persist)
+
     # ── 外观 ──
     ctk.CTkLabel(frame, text='外观',
                  font=ctk.CTkFont(size=14, weight='bold')).pack(anchor='w', pady=(16, 0))

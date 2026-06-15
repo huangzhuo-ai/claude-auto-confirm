@@ -11,6 +11,7 @@ DEFAULTS = {
     'quiet_hours_enabled': False,  # 是否启用静默时段
     'quiet_hours_start': '22:00',  # 静默开始时间
     'quiet_hours_end': '08:00',    # 静默结束时间
+    'persist_policies': True,      # 单窗口策略是否持久化（按标题，跨重启套用）
 }
 
 

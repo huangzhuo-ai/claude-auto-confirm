@@ -163,15 +163,17 @@ def get_policy(hwnd: int) -> str:
 
 def set_policy(hwnd: int, policy: str, title: str | None = None):
     """面板调用：设置单窗口策略。policy ∈ auto|notify|ignore。
-    title 非空时同时持久化（按标题存盘，重启后标题匹配的窗口自动套用）。"""
+    title 非空且 persist_policies 开启时同时持久化（按标题存盘，
+    重启后标题匹配的窗口自动套用）；开关关闭时仅会话内生效、重启即忘。"""
+    persist = title and config.load().get('persist_policies', True)
     if policy == 'auto':
         _policy.pop(hwnd, None)
-        if title:
+        if persist:
             _persisted_policies.pop(title, None)
             save_policies()
     else:
         _policy[hwnd] = policy
-        if title:
+        if persist:
             _persisted_policies[title] = policy
             save_policies()
 
@@ -184,7 +186,9 @@ def resolve_policy(hwnd: int, title: str) -> str:
 
 
 def load_policies():
-    """启动时从 state.json 恢复按标题的持久化策略。"""
+    """启动时从 state.json 恢复按标题的持久化策略。开关关闭时跳过（不读盘）。"""
+    if not config.load().get('persist_policies', True):
+        return
     import state
     data = state.load().get('policies')
     if isinstance(data, dict):
