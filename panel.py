@@ -32,6 +32,8 @@ _COLOR_MAP  = {'blue': 'blue', 'green': 'green', 'dark-blue': 'dark-blue'}
 
 _panel_thread: threading.Thread | None = None
 _panel_lock = threading.Lock()
+_root = None                       # 单一根窗口，只创建一次；关闭=隐藏，再开=显示
+_show_request = threading.Event()  # 托盘线程置位 → Tk 线程内轮询到后 deiconify
 _tree = None
 _log_box = None
 _log_snapshot = [None]
@@ -40,11 +42,24 @@ _stats_labels = {}  # 统计标签缓存
 
 
 def open_panel():
-    """从托盘菜单调用：若面板已开则忽略，否则新建。"""
+    """从托盘菜单调用：请求显示面板。窗口已存在则 deiconify，否则首次构建后显示。
+    根窗口只在子线程创建一次，避免 Tk 跨线程反复重建导致的静默崩溃。"""
+    global _panel_thread
+    with _panel_lock:
+        _show_request.set()  # 始终请求显示，由 Tk 线程的 _poll_show 处理
+        if _panel_thread is not None and _panel_thread.is_alive():
+            return
+        _panel_thread = threading.Thread(target=_run_panel, daemon=True, name='panel')
+        _panel_thread.start()
+
+
+def prewarm_panel():
+    """启动时预构建窗口（隐藏），让用户首次双击托盘瞬间打开（省去现建 4 页的耗时）。"""
     global _panel_thread
     with _panel_lock:
         if _panel_thread is not None and _panel_thread.is_alive():
             return
+        _show_request.clear()  # 预热不显示，等用户真正点开
         _panel_thread = threading.Thread(target=_run_panel, daemon=True, name='panel')
         _panel_thread.start()
 
@@ -556,13 +571,19 @@ def _on_update_found(latest):
 # ── 主面板入口 ────────────────────────────────────────────────────────────────
 
 def _run_panel():
+    global _root, _tree, _log_box, _stats_labels
     cfg = config.load()
     ctk.set_appearance_mode(_THEME_MAP.get(cfg.get('theme', 'system'), 'system'))
     ctk.set_default_color_theme(_COLOR_MAP.get(cfg.get('color', 'blue'), 'blue'))
 
     root = ctk.CTk()
+    _root = root
     root.title('Claude Auto-Yes · 状态面板')
     root.geometry('900x560')
+    root.withdraw()  # 先隐藏构建（预热场景不闪窗）；_poll_show 见到显示请求再 deiconify
+
+    # 关闭按钮：不销毁窗口（销毁后无法在子线程安全重建），改为隐藏；再次双击托盘 deiconify
+    root.protocol('WM_DELETE_WINDOW', root.withdraw)
 
     sidebar = ctk.CTkFrame(root, width=160, corner_radius=0)
     sidebar.pack(side='left', fill='y')
@@ -596,13 +617,39 @@ def _run_panel():
     show('监控')
     updater.check_in_background(__version__, _on_update_found)
 
+    def _poll_show():
+        # 高频轻量轮询：被隐藏时再次双击托盘 → 立即重新显示并置顶（≤200ms 响应）
+        if _show_request.is_set():
+            _show_request.clear()
+            try:
+                root.deiconify()
+                root.lift()
+                root.focus_force()
+            except Exception:
+                pass
+        root.after(200, _poll_show)
+
     def _refresh():
-        status_lbl.configure(
-            text='⏸ 已暂停' if monitor.PAUSED.is_set()
-            else f'监控中 · {monitor.STATS["windows"]} 个终端')
-        _refresh_monitor()
-        _refresh_log()
+        # 窗口隐藏时跳过表格/日志的重刷新，省开销；显示时才更新
+        try:
+            visible = root.state() != 'withdrawn'
+        except Exception:
+            visible = True
+        if visible:
+            status_lbl.configure(
+                text='⏸ 已暂停' if monitor.PAUSED.is_set()
+                else f'监控中 · {monitor.STATS["windows"]} 个终端')
+            _refresh_monitor()
+            _refresh_log()
         root.after(1000, _refresh)
 
     root.after(0, _refresh)
-    root.mainloop()
+    root.after(0, _poll_show)
+    try:
+        root.mainloop()
+    finally:
+        # mainloop 退出（异常或显式销毁）：清掉全局引用，让下次 open_panel 能干净重建
+        _root = None
+        _tree = None
+        _log_box = None
+        _stats_labels = {}

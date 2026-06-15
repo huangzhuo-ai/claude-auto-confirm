@@ -105,10 +105,19 @@ def read_window_text(hwnd: int, rows: int = 40) -> str:
                     best = txt
         except Exception:
             pass
-        for ch in c.GetChildren():
+        # GetChildren() 对正在关闭/无响应的窗口会抛 COM 错误（-2147467259 等），
+        # 单独容错：遍历失败就当此节点无子元素，不让整次读取崩掉。
+        try:
+            children = c.GetChildren()
+        except Exception:
+            children = []
+        for ch in children:
             walk(ch, depth + 1)
 
-    walk(root)
+    try:
+        walk(root)
+    except Exception:
+        return ''
     if not best:
         return ''
     lines = [ln.rstrip() for ln in best.replace('\r\n', '\n').split('\n')]

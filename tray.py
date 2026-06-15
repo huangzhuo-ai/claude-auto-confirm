@@ -89,6 +89,13 @@ def run(dry_run: bool = False):
         target=monitor.scan_loop, args=(_stop,), daemon=True)
     t.start()
 
+    # 预热面板窗口（隐藏构建），让首次双击托盘瞬间打开
+    try:
+        import panel
+        panel.prewarm_panel()
+    except Exception:
+        pass
+
     menu = pystray.Menu(
         pystray.MenuItem(_status_text, None, enabled=False),
         pystray.Menu.SEPARATOR,
