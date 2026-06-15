@@ -6,13 +6,16 @@
 import time
 import threading
 import webbrowser
+import subprocess
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, filedialog
+from datetime import datetime
 import customtkinter as ctk
 
 import monitor
 import config
 import updater
+import applog
 from version import __version__
 
 _STATE_ICONS = {
@@ -33,6 +36,7 @@ _tree = None
 _log_box = None
 _log_snapshot = [None]
 _about_status = None
+_stats_labels = {}  # 统计标签缓存
 
 
 def open_panel():
@@ -48,7 +52,45 @@ def open_panel():
 # ── 各页构建 ──────────────────────────────────────────────────────────────────
 
 def _build_monitor_page(frame):
-    global _tree
+    global _tree, _stats_labels
+
+    # 统计卡片
+    stats_frame = ctk.CTkFrame(frame)
+    stats_frame.pack(fill='x', pady=(0, 12))
+
+    ctk.CTkLabel(stats_frame, text='📊 统计',
+                 font=ctk.CTkFont(size=13, weight='bold')).pack(anchor='w', padx=10, pady=(8, 4))
+
+    cards = ctk.CTkFrame(stats_frame, fg_color='transparent')
+    cards.pack(fill='x', padx=10, pady=(0, 8))
+
+    # 今日统计卡
+    today_card = ctk.CTkFrame(cards)
+    today_card.pack(side='left', fill='x', expand=True, padx=(0, 6))
+    ctk.CTkLabel(today_card, text='今日', font=ctk.CTkFont(size=11, weight='bold')).pack(pady=(6, 2))
+    _stats_labels['today_auto'] = ctk.CTkLabel(today_card, text='✅ 自动确认: 0')
+    _stats_labels['today_auto'].pack(anchor='w', padx=8, pady=1)
+    _stats_labels['today_notify'] = ctk.CTkLabel(today_card, text='🔔 通知: 0')
+    _stats_labels['today_notify'].pack(anchor='w', padx=8, pady=1)
+    _stats_labels['today_error'] = ctk.CTkLabel(today_card, text='❌ 错误: 0')
+    _stats_labels['today_error'].pack(anchor='w', padx=8, pady=1)
+    _stats_labels['today_idle'] = ctk.CTkLabel(today_card, text='🟠 空闲: 0')
+    _stats_labels['today_idle'].pack(anchor='w', padx=8, pady=(1, 6))
+
+    # 累计统计卡
+    total_card = ctk.CTkFrame(cards)
+    total_card.pack(side='left', fill='x', expand=True, padx=(6, 0))
+    ctk.CTkLabel(total_card, text='累计', font=ctk.CTkFont(size=11, weight='bold')).pack(pady=(6, 2))
+    _stats_labels['total_auto'] = ctk.CTkLabel(total_card, text='✅ 自动确认: 0')
+    _stats_labels['total_auto'].pack(anchor='w', padx=8, pady=1)
+    _stats_labels['total_notify'] = ctk.CTkLabel(total_card, text='🔔 通知: 0')
+    _stats_labels['total_notify'].pack(anchor='w', padx=8, pady=1)
+    _stats_labels['total_error'] = ctk.CTkLabel(total_card, text='❌ 错误: 0')
+    _stats_labels['total_error'].pack(anchor='w', padx=8, pady=1)
+    _stats_labels['total_idle'] = ctk.CTkLabel(total_card, text='🟠 空闲: 0')
+    _stats_labels['total_idle'].pack(anchor='w', padx=8, pady=(1, 6))
+
+    # 策略按钮栏
     bar = ctk.CTkFrame(frame, fg_color='transparent')
     bar.pack(fill='x', pady=(0, 8))
     ctk.CTkLabel(bar, text='选中行后设策略：').pack(side='left', padx=(0, 6))
@@ -115,11 +157,78 @@ def _refresh_monitor():
     for iid in existing - seen:
         _tree.delete(iid)
 
+    # 更新统计数据
+    if _stats_labels:
+        today = monitor.COUNTERS['today']
+        total = monitor.COUNTERS['total']
+        _stats_labels['today_auto'].configure(text=f'✅ 自动确认: {today["auto_yes"]}')
+        _stats_labels['today_notify'].configure(text=f'🔔 通知: {today["notify"]}')
+        _stats_labels['today_error'].configure(text=f'❌ 错误: {today["error"]}')
+        _stats_labels['today_idle'].configure(text=f'🟠 空闲: {today["idle"]}')
+        _stats_labels['total_auto'].configure(text=f'✅ 自动确认: {total["auto_yes"]}')
+        _stats_labels['total_notify'].configure(text=f'🔔 通知: {total["notify"]}')
+        _stats_labels['total_error'].configure(text=f'❌ 错误: {total["error"]}')
+        _stats_labels['total_idle'].configure(text=f'🟠 空闲: {total["idle"]}')
+
+
+def _open_log_folder():
+    """在资源管理器中定位到 app.log。"""
+    try:
+        log_path = applog._log_path()
+        if log_path.exists():
+            subprocess.run(['explorer', '/select,', str(log_path)], check=False)
+        else:
+            subprocess.run(['explorer', str(log_path.parent)], check=False)
+    except Exception as e:
+        messagebox.showerror('打开失败', f'无法打开日志目录：{e}')
+
+
+def _export_events():
+    """把当前事件流导出为 CSV 文件。"""
+    events = list(monitor.EVENTS)
+    if not events:
+        messagebox.showinfo('导出事件', '当前没有事件可导出。')
+        return
+
+    now = datetime.now().strftime('%Y%m%d_%H%M%S')
+    default_name = f'events_{now}.csv'
+    path = filedialog.asksaveasfilename(
+        title='导出事件日志',
+        defaultextension='.csv',
+        filetypes=[('CSV 文件', '*.csv'), ('文本文件', '*.txt'), ('所有文件', '*.*')],
+        initialfile=default_name
+    )
+    if not path:
+        return
+
+    try:
+        import csv
+        with open(path, 'w', newline='', encoding='utf-8-sig') as f:
+            writer = csv.writer(f)
+            writer.writerow(['时间', '动作', '类型', '标题', '详情'])
+            for ev in reversed(events):
+                ts = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(ev['ts']))
+                action = _ACTION_LABELS.get(ev['action'], ev['action'])
+                writer.writerow([ts, action, ev['kind'], ev['title'], ev['detail']])
+        messagebox.showinfo('导出成功', f'已导出 {len(events)} 条事件到:\n{path}')
+    except Exception as e:
+        messagebox.showerror('导出失败', f'保存文件时出错：{e}')
+
 
 def _build_log_page(frame):
     global _log_box
-    ctk.CTkLabel(frame, text='事件日志',
-                 font=ctk.CTkFont(size=14, weight='bold')).pack(anchor='w', pady=(0, 6))
+    header = ctk.CTkFrame(frame, fg_color='transparent')
+    header.pack(fill='x', pady=(0, 8))
+    ctk.CTkLabel(header, text='事件日志',
+                 font=ctk.CTkFont(size=14, weight='bold')).pack(side='left')
+
+    btn_bar = ctk.CTkFrame(header, fg_color='transparent')
+    btn_bar.pack(side='right')
+    ctk.CTkButton(btn_bar, text='📁 打开日志目录', width=120,
+                  command=_open_log_folder).pack(side='left', padx=3)
+    ctk.CTkButton(btn_bar, text='💾 导出事件', width=100,
+                  command=_export_events).pack(side='left', padx=3)
+
     _log_box = ctk.CTkTextbox(frame, font=ctk.CTkFont(family='Consolas', size=12))
     _log_box.pack(fill='both', expand=True)
     _log_box.configure(state='disabled')
@@ -182,6 +291,82 @@ def _build_settings_page(frame):
             messagebox.showwarning('开机自启被拦截',
                 '写入失败，疑被安全软件/系统管控拦截。请加白名单后重试。')
     auto_sw.configure(command=_toggle_auto)
+
+    # ── 忽略列表 ──
+    ctk.CTkLabel(frame, text='忽略列表',
+                 font=ctk.CTkFont(size=14, weight='bold')).pack(anchor='w', pady=(16, 0))
+    ctk.CTkLabel(frame, text='含以下字串的窗口标题将被跳过（不监控）',
+                 font=ctk.CTkFont(size=11), text_color='gray').pack(anchor='w', pady=(2, 4))
+
+    ignore_frame = ctk.CTkFrame(frame)
+    ignore_frame.pack(fill='x', pady=4)
+
+    ignore_listbox = tk.Listbox(ignore_frame, height=4, font=('Consolas', 10))
+    ignore_listbox.pack(side='left', fill='both', expand=True, padx=(8, 4), pady=8)
+    for item in cfg.get('ignored_titles', []):
+        ignore_listbox.insert('end', item)
+
+    btn_col = ctk.CTkFrame(ignore_frame, fg_color='transparent')
+    btn_col.pack(side='right', padx=(0, 8), pady=8)
+
+    def _add_ignore():
+        from tkinter import simpledialog
+        title = simpledialog.askstring('添加忽略规则', '输入要忽略的窗口标题关键词：')
+        if title and title.strip():
+            ignore_listbox.insert('end', title.strip())
+            cfg['ignored_titles'] = list(ignore_listbox.get(0, 'end'))
+            config.save(cfg)
+
+    def _remove_ignore():
+        sel = ignore_listbox.curselection()
+        if sel:
+            ignore_listbox.delete(sel[0])
+            cfg['ignored_titles'] = list(ignore_listbox.get(0, 'end'))
+            config.save(cfg)
+
+    ctk.CTkButton(btn_col, text='➕ 添加', width=60, command=_add_ignore).pack(pady=2)
+    ctk.CTkButton(btn_col, text='➖ 删除', width=60, command=_remove_ignore).pack(pady=2)
+
+    # ── 静默时段 ──
+    ctk.CTkLabel(frame, text='静默时段',
+                 font=ctk.CTkFont(size=14, weight='bold')).pack(anchor='w', pady=(16, 0))
+    ctk.CTkLabel(frame, text='静默时段内只记录日志，不发送桌面通知',
+                 font=ctk.CTkFont(size=11), text_color='gray').pack(anchor='w', pady=(2, 4))
+
+    quiet_sw = ctk.CTkSwitch(frame, text='启用静默时段')
+    quiet_sw.pack(anchor='w', pady=4)
+    if cfg.get('quiet_hours_enabled', False):
+        quiet_sw.select()
+
+    quiet_row = ctk.CTkFrame(frame, fg_color='transparent')
+    quiet_row.pack(anchor='w', pady=4, fill='x')
+    ctk.CTkLabel(quiet_row, text='从', width=30, anchor='w').pack(side='left', padx=(0, 4))
+
+    start_entry = ctk.CTkEntry(quiet_row, width=70, placeholder_text='HH:MM')
+    start_entry.insert(0, cfg.get('quiet_hours_start', '22:00'))
+    start_entry.pack(side='left', padx=2)
+
+    ctk.CTkLabel(quiet_row, text='到', width=30, anchor='center').pack(side='left', padx=4)
+
+    end_entry = ctk.CTkEntry(quiet_row, width=70, placeholder_text='HH:MM')
+    end_entry.insert(0, cfg.get('quiet_hours_end', '08:00'))
+    end_entry.pack(side='left', padx=2)
+
+    def _save_quiet():
+        cfg['quiet_hours_enabled'] = bool(quiet_sw.get())
+        start = start_entry.get().strip()
+        end = end_entry.get().strip()
+        # 简单验证格式
+        import re
+        if re.match(r'^\d{1,2}:\d{2}$', start) and re.match(r'^\d{1,2}:\d{2}$', end):
+            cfg['quiet_hours_start'] = start
+            cfg['quiet_hours_end'] = end
+            config.save(cfg)
+            messagebox.showinfo('保存成功', '静默时段设置已保存')
+        else:
+            messagebox.showerror('格式错误', '时间格式应为 HH:MM（如 22:00）')
+
+    ctk.CTkButton(quiet_row, text='保存', width=60, command=_save_quiet).pack(side='left', padx=(8, 0))
 
     # ── 外观 ──
     ctk.CTkLabel(frame, text='外观',

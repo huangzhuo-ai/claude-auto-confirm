@@ -8,6 +8,9 @@ DEFAULTS = {
     'ignored_titles': [],          # 忽略含这些字串的窗口标题
     'theme': 'system',             # 外观明暗：system | dark | light
     'color': 'blue',               # 主题色：blue | green | dark-blue
+    'quiet_hours_enabled': False,  # 是否启用静默时段
+    'quiet_hours_start': '22:00',  # 静默开始时间
+    'quiet_hours_end': '08:00',    # 静默结束时间
 }
 
 

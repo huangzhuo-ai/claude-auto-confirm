@@ -77,6 +77,11 @@ def _reset(monkeypatch, tmp_path):
     monitor._policy.clear()
     monitor.EVENTS.clear()
     monitor._misfire_sigs.clear()
+    # 重置统计计数器（_log_event 会累加，测试间需隔离）
+    import time as _t
+    monitor.COUNTERS['total'] = {'auto_yes': 0, 'notify': 0, 'error': 0, 'idle': 0}
+    monitor.COUNTERS['today'] = {'auto_yes': 0, 'notify': 0, 'error': 0,
+                                 'idle': 0, 'date': _t.strftime('%Y-%m-%d')}
     monitor.DRY_RUN = False
     monitor.PAUSED.clear()
     # 默认：发回车总是成功
@@ -259,4 +264,34 @@ def test_unknown_ignored_by_policy(monkeypatch):
     assert monitor._win_state[1]['state'] == 'ignored'
     d = monitor._misfires_dir()
     assert not d.exists() or not list(d.glob('*.txt'))
+
+
+# ── 统计计数器 ─────────────────────────────────────────────────
+def test_counter_increments_on_auto_yes(monkeypatch):
+    _feed(monkeypatch, YES_SCREEN)
+    monitor.process(_win())
+    assert monitor.COUNTERS['total']['auto_yes'] == 1
+    assert monitor.COUNTERS['today']['auto_yes'] == 1
+
+
+def test_counter_increments_on_error(monkeypatch):
+    _feed(monkeypatch, ERROR_SCREEN)
+    monitor.process(_win())
+    assert monitor.COUNTERS['total']['error'] == 1
+    assert monitor.COUNTERS['today']['error'] == 1
+
+
+def test_counter_resets_today_on_date_change(monkeypatch):
+    # 把今日日期设为昨天，再记一条事件应触发今日重置
+    monitor.COUNTERS['today'] = {'auto_yes': 5, 'notify': 3, 'error': 0,
+                                 'idle': 0, 'date': '2000-01-01'}
+    monitor.COUNTERS['total']['auto_yes'] = 5
+    _feed(monkeypatch, YES_SCREEN)
+    monitor.process(_win())
+    # 今日计数被重置后只含本次这一条
+    assert monitor.COUNTERS['today']['auto_yes'] == 1
+    assert monitor.COUNTERS['today']['notify'] == 0
+    # 累计不重置，继续累加
+    assert monitor.COUNTERS['total']['auto_yes'] == 6
+
 

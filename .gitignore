@@ -35,3 +35,6 @@ desktop.ini
 
 # 可视化伴侣临时文件
 .superpowers/
+
+# Claude Code 本地工作目录
+.claude/

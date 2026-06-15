@@ -90,6 +90,12 @@ _win_state: dict[int, dict] = {}  # hwnd → 该窗口最新状态（跨轮保�
 # 事件日志环形缓冲：每次实际动作（自动确认/通知/错误/空闲通知）追加一条，供面板倒序展示。
 EVENTS: deque = deque(maxlen=200)
 
+# 统计计数器：累计 + 今日（用于面板统计卡片）
+COUNTERS = {
+    'total': {'auto_yes': 0, 'notify': 0, 'error': 0, 'idle': 0},
+    'today': {'auto_yes': 0, 'notify': 0, 'error': 0, 'idle': 0, 'date': time.strftime('%Y-%m-%d')},
+}
+
 # 单窗口策略：hwnd → 'auto' | 'notify' | 'ignore'。缺省 'auto'（现有行为）。
 #   auto   ：自动确认 yes 框，choice/error 通知（默认）
 #   notify ：即便遇到默认选中 Yes 的框也不回车，改为通知
@@ -106,6 +112,14 @@ def _log_event(win: dict, action: str, detail: str = ''):
         'ts': time.time(), 'hwnd': win['hwnd'], 'kind': win['kind'],
         'title': win['title'], 'action': action, 'detail': detail,
     })
+    # 更新统计计数器
+    today = time.strftime('%Y-%m-%d')
+    if COUNTERS['today']['date'] != today:
+        # 日期变了，重置今日计数
+        COUNTERS['today'] = {'auto_yes': 0, 'notify': 0, 'error': 0, 'idle': 0, 'date': today}
+    if action in COUNTERS['total']:
+        COUNTERS['total'][action] += 1
+        COUNTERS['today'][action] += 1
 
 
 def get_policy(hwnd: int) -> str:
@@ -118,6 +132,32 @@ def set_policy(hwnd: int, policy: str):
         _policy.pop(hwnd, None)
     else:
         _policy[hwnd] = policy
+
+
+def is_quiet_hours(now=None) -> bool:
+    """判断当前是否处于静默时段（只记录不通知）。
+    now 可传入 datetime.time 用于测试，缺省取当前时刻。"""
+    cfg = config.load()
+    if not cfg.get('quiet_hours_enabled', False):
+        return False
+
+    try:
+        from datetime import datetime
+        if now is None:
+            now = datetime.now().time()
+        start_str = cfg.get('quiet_hours_start', '22:00')
+        end_str = cfg.get('quiet_hours_end', '08:00')
+
+        start_time = datetime.strptime(start_str, '%H:%M').time()
+        end_time = datetime.strptime(end_str, '%H:%M').time()
+
+        # 跨日情况（如 22:00 - 08:00）
+        if start_time > end_time:
+            return now >= start_time or now < end_time
+        else:
+            return start_time <= now < end_time
+    except Exception:
+        return False
 
 
 # ── 漏报样本落盘 ──────────────────────────────────────────────
@@ -217,7 +257,11 @@ def _bring_to_front(hwnd: int):
 def _notify_async(title: str, body: str, hwnd: int):
     """后台线程发通知：win11toast 的 notify() 不回调 Python 函数，
     必须用 toast()（内部 add_activated 注册回调），但它会阻塞等待点击事件，
-    故放进守护线程。用户点击通知 → on_click 触发 → 把对应终端带到前台。"""
+    故放进守护线程。用户点击通知 → on_click 触发 → 把对应终端带到前台。
+    静默时段：只记录日志，不发送桌面通知。"""
+    if is_quiet_hours():
+        log(f'  [静默时段] {title}: {body}')
+        return
     def run():
         try:
             toast(title, body, app_id='Claude Auto-Yes',
