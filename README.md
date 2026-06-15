@@ -58,6 +58,7 @@ Ctrl+C 退出。
 | `autostart.py` | 开机自启：在用户「启动」文件夹创建/删除 `.lnk` 快捷方式 |
 | `singleton.py` | 单实例锁：命名 mutex 保证同一时刻只有一个监控进程 |
 | `applog.py` | 日志：同时输出控制台与 `app.log`（打包后无控制台仍可排查） |
+| `state.py` | 运行时状态持久化：统计计数器、单窗口策略存到 `state.json`，跨重启保留 |
 
 ## 打包 / 分发
 
@@ -73,6 +74,7 @@ Ctrl+C 退出。
 运行时会在 exe 同目录生成：
 - `app.log`：运行日志（滚动，单文件上限 1MB）。
 - `misfires/`：遇到无法识别的确认框时落盘的样本（正常为空）。
+- `state.json`：统计计数器与单窗口策略，跨重启保留（自动维护，无需手改）。
 
 当前版本：见 `version.py` 的 `__version__`（同步 `version_info.txt`）。
 

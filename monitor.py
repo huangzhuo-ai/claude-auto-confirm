@@ -90,17 +90,51 @@ _win_state: dict[int, dict] = {}  # hwnd → 该窗口最新状态（跨轮保�
 # 事件日志环形缓冲：每次实际动作（自动确认/通知/错误/空闲通知）追加一条，供面板倒序展示。
 EVENTS: deque = deque(maxlen=200)
 
-# 统计计数器：累计 + 今日（用于面板统计卡片）
+# 统计计数器：累计 + 今日（用于面板统计卡片）。持久化到 state.json，跨重启保留。
 COUNTERS = {
     'total': {'auto_yes': 0, 'notify': 0, 'error': 0, 'idle': 0},
     'today': {'auto_yes': 0, 'notify': 0, 'error': 0, 'idle': 0, 'date': time.strftime('%Y-%m-%d')},
 }
+
+
+def load_counters():
+    """启动时从 state.json 恢复计数器。若存档的 today 不是今天则今日清零、累计保留。"""
+    import state
+    data = state.load().get('counters')
+    if not isinstance(data, dict):
+        return
+    today = time.strftime('%Y-%m-%d')
+    total = data.get('total')
+    if isinstance(total, dict):
+        for k in COUNTERS['total']:
+            COUNTERS['total'][k] = int(total.get(k, 0))
+    saved_today = data.get('today')
+    if isinstance(saved_today, dict) and saved_today.get('date') == today:
+        for k in ('auto_yes', 'notify', 'error', 'idle'):
+            COUNTERS['today'][k] = int(saved_today.get(k, 0))
+        COUNTERS['today']['date'] = today
+    else:
+        # 存档是旧的一天（或缺失）：今日从零开始
+        COUNTERS['today'] = {'auto_yes': 0, 'notify': 0, 'error': 0,
+                             'idle': 0, 'date': today}
+
+
+def save_counters():
+    """把当前计数器写回 state.json（合并保留其它键，如 policies）。"""
+    import state
+    data = state.load()
+    data['counters'] = COUNTERS
+    state.save(data)
 
 # 单窗口策略：hwnd → 'auto' | 'notify' | 'ignore'。缺省 'auto'（现有行为）。
 #   auto   ：自动确认 yes 框，choice/error 通知（默认）
 #   notify ：即便遇到默认选中 Yes 的框也不回车，改为通知
 #   ignore ：完全跳过该窗口（不读屏、不通知）
 _policy: dict[int, str] = {}
+
+# 持久化策略：窗口标题 → policy。hwnd 重启会变，无法持久化；标题是稳定属性，
+# 故按标题存盘。重启后标题匹配的窗口自动套用（与 ignored_titles 的模型一致）。
+_persisted_policies: dict[str, str] = {}
 
 # 全局暂停开关：tray 与 panel 共用同一个 Event（从 tray 迁来，集中到 monitor）。
 PAUSED = threading.Event()
@@ -120,18 +154,52 @@ def _log_event(win: dict, action: str, detail: str = ''):
     if action in COUNTERS['total']:
         COUNTERS['total'][action] += 1
         COUNTERS['today'][action] += 1
+        save_counters()  # 落盘，跨重启保留
 
 
 def get_policy(hwnd: int) -> str:
     return _policy.get(hwnd, 'auto')
 
 
-def set_policy(hwnd: int, policy: str):
-    """面板调用：设置单窗口策略。policy ∈ auto|notify|ignore。"""
+def set_policy(hwnd: int, policy: str, title: str | None = None):
+    """面板调用：设置单窗口策略。policy ∈ auto|notify|ignore。
+    title 非空时同时持久化（按标题存盘，重启后标题匹配的窗口自动套用）。"""
     if policy == 'auto':
         _policy.pop(hwnd, None)
+        if title:
+            _persisted_policies.pop(title, None)
+            save_policies()
     else:
         _policy[hwnd] = policy
+        if title:
+            _persisted_policies[title] = policy
+            save_policies()
+
+
+def resolve_policy(hwnd: int, title: str) -> str:
+    """解析某窗口的有效策略：会话内 hwnd 设置优先，否则回退到按标题持久化的策略。"""
+    if hwnd in _policy:
+        return _policy[hwnd]
+    return _persisted_policies.get(title, 'auto')
+
+
+def load_policies():
+    """启动时从 state.json 恢复按标题的持久化策略。"""
+    import state
+    data = state.load().get('policies')
+    if isinstance(data, dict):
+        _persisted_policies.clear()
+        for title, pol in data.items():
+            if pol in ('notify', 'ignore'):
+                _persisted_policies[str(title)] = pol
+
+
+def save_policies():
+    """把持久化策略写回 state.json（合并保留其它键，如 counters）。"""
+    import state
+    data = state.load()
+    data['policies'] = dict(_persisted_policies)
+    state.save(data)
 
 
 def is_quiet_hours(now=None) -> bool:
@@ -377,8 +445,8 @@ def is_idle_waiting(text: str) -> bool:
 def process(win: dict):
     hwnd, kind = win['hwnd'], win['kind']
 
-    # 单窗口策略：ignore → 完全跳过
-    policy = get_policy(hwnd)
+    # 单窗口策略：会话内 hwnd 设置优先，否则回退到按标题持久化的策略。ignore → 完全跳过
+    policy = resolve_policy(hwnd, win.get('title', ''))
     if policy == 'ignore':
         _set_state(win, 'ignored')
         _idle_since.pop(hwnd, None)
@@ -586,6 +654,10 @@ def main():
                 except Exception:
                     pass
             sys.exit(0)
+
+    # 恢复持久化的统计计数器与单窗口策略（跨重启保留）
+    load_counters()
+    load_policies()
 
     mode = ' [DRY-RUN：只检测不发键]' if DRY_RUN else ''
 

@@ -19,7 +19,7 @@ for pkg in ('win11toast', 'uiautomation', 'pystray', 'customtkinter'):
 
 # 本项目的模块多为懒加载（panel 在 tray 里 import、tray 在 monitor.main 里 import），
 # PyInstaller 静态分析抓不到，必须显式声明，否则打包后「打开面板」会崩。
-hiddenimports += ['panel', 'tray', 'config', 'terminal', 'applog', 'version', 'autostart', 'singleton', 'updater']
+hiddenimports += ['panel', 'tray', 'config', 'terminal', 'applog', 'version', 'autostart', 'singleton', 'updater', 'state']
 
 a = Analysis(
     ['monitor.py'],

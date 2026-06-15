@@ -75,6 +75,7 @@ def _reset(monkeypatch, tmp_path):
     monitor._idle_since.clear()
     monitor._win_state.clear()
     monitor._policy.clear()
+    monitor._persisted_policies.clear()
     monitor.EVENTS.clear()
     monitor._misfire_sigs.clear()
     # 重置统计计数器（_log_event 会累加，测试间需隔离）
@@ -90,6 +91,9 @@ def _reset(monkeypatch, tmp_path):
     monkeypatch.setattr(monitor, '_notify_async', lambda *a, **k: None)
     # 样本目录隔离到临时目录
     monkeypatch.setattr(monitor, '_misfires_dir', lambda: tmp_path / 'misfires')
+    # state.json 隔离到临时目录（_log_event → save_counters 会写盘，绝不污染真实文件）
+    import state
+    monkeypatch.setattr(state, '_state_path', lambda: tmp_path / 'state.json')
     yield
 
 

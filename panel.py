@@ -119,9 +119,9 @@ def _build_monitor_page(frame):
     _tree.bind('<Double-1>', _on_dbl)
 
 
-def _get_policy_label(hwnd):
+def _get_policy_label(hwnd, title=''):
     return {'auto': '自动', 'notify': '仅通知', 'ignore': '忽略'}.get(
-        monitor.get_policy(hwnd), '自动')
+        monitor.resolve_policy(hwnd, title), '自动')
 
 
 def _set_selected_policy(policy):
@@ -131,7 +131,10 @@ def _set_selected_policy(policy):
     if not item:
         return
     try:
-        monitor.set_policy(int(item), policy)
+        hwnd = int(item)
+        # 取该窗口的完整标题用于持久化（表格里是截断的，从 _win_state 拿原始值）
+        title = monitor._win_state.get(hwnd, {}).get('title', '')
+        monitor.set_policy(hwnd, policy, title=title)
     except Exception:
         pass
 
@@ -146,7 +149,7 @@ def _refresh_monitor():
         iid = str(hwnd)
         seen.add(iid)
         vals = (row.get('kind', ''), row.get('title', '')[:50],
-                _get_policy_label(hwnd),
+                _get_policy_label(hwnd, row.get('title', '')),
                 _STATE_ICONS.get(row.get('state', ''), row.get('state', '')),
                 row.get('detail', '')[:60],
                 time.strftime('%H:%M:%S', time.localtime(row.get('ts', 0))))
