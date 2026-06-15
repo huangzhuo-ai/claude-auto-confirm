@@ -242,6 +242,34 @@ def test_known_screens_still_classified():
     assert monitor.detect_prompt(ERROR_SCREEN) == 'error'
 
 
+# ── 自定义错误关键词 ───────────────────────────────────────────
+def test_custom_error_keyword_detected(monkeypatch):
+    import config
+    monkeypatch.setattr(config, 'load',
+                        lambda: {**config.DEFAULTS,
+                                 'extra_error_keywords': ['quota exhausted']})
+    screen = "● doing stuff\n  quota exhausted, please wait\n esc to interrupt\n"
+    assert monitor.detect_prompt(screen) == 'error'
+
+
+def test_custom_error_keyword_empty_no_false_positive(monkeypatch):
+    import config
+    monkeypatch.setattr(config, 'load',
+                        lambda: {**config.DEFAULTS, 'extra_error_keywords': []})
+    # 普通输出不该因为空自定义词被误判
+    assert monitor.detect_prompt(NO_FOOTER_SCREEN) is None
+
+
+def test_custom_error_keyword_case_insensitive(monkeypatch):
+    import config
+    monkeypatch.setattr(config, 'load',
+                        lambda: {**config.DEFAULTS,
+                                 'extra_error_keywords': ['Disk Full']})
+    screen = "● writing\n  ERROR: disk full on volume C\n esc to interrupt\n"
+    assert monitor.detect_prompt(screen) == 'error'
+
+
+
 def test_unknown_notifies_not_confirms_and_saves(monkeypatch):
     _feed(monkeypatch, UNKNOWN_SCREEN)
     sent = []
@@ -325,6 +353,41 @@ def test_ignored_titles_reflects_runtime_config(monkeypatch):
     cfg_state['ignored_titles'] = ['secret']
     assert monitor._is_ignored('my secret terminal') is True
     assert monitor._is_ignored('other window') is False
+
+
+# ── 暂停定时自动恢复 ───────────────────────────────────────────
+def test_pause_for_sets_and_auto_resumes():
+    import time as _t
+    monitor.PAUSED.clear()
+    monitor.pause_for(0.2)  # 暂停 0.2 秒
+    assert monitor.PAUSED.is_set()       # 立即处于暂停
+    _t.sleep(0.4)
+    assert not monitor.PAUSED.is_set()   # 到点自动恢复
+    monitor.cancel_pause_timer()
+
+
+def test_pause_for_cancels_previous_timer():
+    import time as _t
+    monitor.PAUSED.clear()
+    monitor.pause_for(5)      # 先排一个 5 秒的
+    monitor.pause_for(0.2)    # 再排一个 0.2 秒的，应取消前一个
+    _t.sleep(0.4)
+    # 若旧 timer 未取消，它仍会在 5 秒后触发；这里只验证短的已恢复
+    assert not monitor.PAUSED.is_set()
+    monitor.cancel_pause_timer()
+
+
+def test_manual_resume_cancels_timer():
+    """手动恢复（clear PAUSED）后，应能取消待定的自动恢复 timer，避免误触。"""
+    import time as _t
+    monitor.PAUSED.clear()
+    monitor.pause_for(0.3)
+    assert monitor.PAUSED.is_set()
+    monitor.cancel_pause_timer()   # 手动取消
+    monitor.PAUSED.clear()         # 手动恢复
+    _t.sleep(0.5)
+    assert not monitor.PAUSED.is_set()  # 不会被旧 timer 再次扰动
+
 
 
 

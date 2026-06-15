@@ -12,6 +12,8 @@ DEFAULTS = {
     'quiet_hours_start': '22:00',  # 静默开始时间
     'quiet_hours_end': '08:00',    # 静默结束时间
     'persist_policies': True,      # 单窗口策略是否持久化（按标题，跨重启套用）
+    'extra_error_keywords': [],    # 额外的错误关键词（除内置外，命中即通知）
+    'sound_enabled': False,        # 通知时是否播放提示音
 }
 
 

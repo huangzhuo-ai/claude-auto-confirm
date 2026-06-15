@@ -25,15 +25,25 @@ def _status_text(_item) -> str:
     if monitor.PAUSED.is_set():
         return '⏸ 已暂停'
     s = monitor.STATS
-    return f'监控中 · {s["windows"]} 个终端'
+    today = monitor.COUNTERS['today']
+    return (f'监控中 · {s["windows"]} 个终端 · '
+            f'今日已确认 {today["auto_yes"]} 次')
 
 
 def _toggle_pause(icon, _item):
     if monitor.PAUSED.is_set():
+        monitor.cancel_pause_timer()   # 手动恢复时取消待定的自动恢复 timer
         monitor.PAUSED.clear()
     else:
         monitor.PAUSED.set()
     icon.icon = _make_icon(monitor.PAUSED.is_set())
+    icon.update_menu()
+
+
+def _pause_for(icon, minutes: int):
+    """定时暂停 minutes 分钟后自动恢复。"""
+    monitor.pause_for(minutes * 60)
+    icon.icon = _make_icon(True)
     icon.update_menu()
 
 
@@ -68,6 +78,7 @@ def _open_panel(_icon, _item):
 
 
 def _quit(icon, _item):
+    monitor.cancel_pause_timer()
     _stop.set()
     icon.stop()
 
@@ -84,6 +95,11 @@ def run(dry_run: bool = False):
         # default=True：设为默认项，Windows 下双击托盘图标即触发「打开面板」
         pystray.MenuItem('打开面板', _open_panel, default=True),
         pystray.MenuItem('暂停', _toggle_pause, checked=_is_paused),
+        pystray.MenuItem('定时暂停', pystray.Menu(
+            pystray.MenuItem('暂停 30 分钟', lambda icon, _i: _pause_for(icon, 30)),
+            pystray.MenuItem('暂停 1 小时', lambda icon, _i: _pause_for(icon, 60)),
+            pystray.MenuItem('暂停 2 小时', lambda icon, _i: _pause_for(icon, 120)),
+        )),
         pystray.MenuItem('开机自启', _toggle_autostart, checked=_is_autostart),
         pystray.MenuItem('退出', _quit),
     )

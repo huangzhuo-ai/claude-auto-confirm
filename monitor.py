@@ -139,6 +139,40 @@ _persisted_policies: dict[str, str] = {}
 # 全局暂停开关：tray 与 panel 共用同一个 Event（从 tray 迁来，集中到 monitor）。
 PAUSED = threading.Event()
 
+# 定时自动恢复：pause_for(秒) 暂停一段时间后自动恢复。重复调用会取消上一个 timer。
+_pause_timer: threading.Timer | None = None
+_pause_timer_lock = threading.Lock()
+
+
+def cancel_pause_timer():
+    """取消待定的自动恢复 timer（手动恢复/退出时调用，避免旧 timer 误触）。"""
+    global _pause_timer
+    with _pause_timer_lock:
+        if _pause_timer is not None:
+            _pause_timer.cancel()
+            _pause_timer = None
+
+
+def pause_for(seconds: float):
+    """暂停监控并在 seconds 秒后自动恢复。取消上一个未到期的 timer。"""
+    global _pause_timer
+    with _pause_timer_lock:
+        if _pause_timer is not None:
+            _pause_timer.cancel()
+        PAUSED.set()
+
+        def _resume():
+            global _pause_timer
+            PAUSED.clear()
+            with _pause_timer_lock:
+                _pause_timer = None
+            log(f'[RESUME] 定时暂停到期，已自动恢复监控')
+
+        _pause_timer = threading.Timer(seconds, _resume)
+        _pause_timer.daemon = True
+        _pause_timer.start()
+    log(f'[PAUSE] 已暂停，将在 {int(seconds)}s 后自动恢复')
+
 
 def _log_event(win: dict, action: str, detail: str = ''):
     """追加一条事件到环形缓冲。action ∈ auto_yes|notify|error|idle。"""
@@ -326,14 +360,30 @@ def _bring_to_front(hwnd: int):
         log(f'  [WARN] 跳转窗口失败: {e}')
 
 
+def _winsound_beep():
+    """播放系统提示音。单独抽出便于测试打桩。"""
+    import winsound
+    winsound.MessageBeep(winsound.MB_ICONEXCLAMATION)
+
+
+def _play_sound():
+    """按 config.sound_enabled 播放提示音。任何失败静默吞掉，绝不拖垮通知。"""
+    try:
+        if config.load().get('sound_enabled', False):
+            _winsound_beep()
+    except Exception:
+        pass
+
+
 def _notify_async(title: str, body: str, hwnd: int):
     """后台线程发通知：win11toast 的 notify() 不回调 Python 函数，
     必须用 toast()（内部 add_activated 注册回调），但它会阻塞等待点击事件，
     故放进守护线程。用户点击通知 → on_click 触发 → 把对应终端带到前台。
-    静默时段：只记录日志，不发送桌面通知。"""
+    静默时段：只记录日志，不发送桌面通知（也不响铃）。"""
     if is_quiet_hours():
         log(f'  [静默时段] {title}: {body}')
         return
+    _play_sound()
     def run():
         try:
             toast(title, body, app_id='Claude Auto-Yes',
@@ -360,6 +410,19 @@ def looks_like_claude(text: str) -> bool:
                 or CLAUDE_FOOTER_RE.search(text))
 
 
+def _matches_error(line: str) -> bool:
+    """该行是否命中错误特征：内置 ERROR_RE，或用户在 config 配置的额外关键词。
+    自定义词按大小写不敏感的子串匹配（用户填裸词即可，无需懂正则）。"""
+    if ERROR_RE.search(line):
+        return True
+    try:
+        extra = config.load().get('extra_error_keywords', [])
+    except Exception:
+        extra = []
+    low = line.lower()
+    return any(kw and kw.lower() in low for kw in extra)
+
+
 def detect_prompt(text: str):
     """判定当前屏幕**底部**是否有活动的确认框。
     返回 'yes' (默认选中Yes，可自动回车) | 'choice' (需人工选)
@@ -376,7 +439,7 @@ def detect_prompt(text: str):
         return None
     # 优先检测错误/卡死状态（登录失效、API错误、额度耗尽等）——需人工介入。
     # 这类提示常被任务挂件/输入框边框挤到偏上，故放宽到最后 15 行内即认定。
-    if any(ERROR_RE.search(l) for l in lines[-15:]):
+    if any(_matches_error(l) for l in lines[-15:]):
         return 'error'
     # footer 必须靠近底部（最后 6 行内）——容纳确认框下方可能挂着的任务列表挂件
     # （形如 "N tasks (...)" + "■ 当前任务"），但仍排除滚到历史里的旧框。

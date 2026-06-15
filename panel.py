@@ -186,6 +186,20 @@ def _open_log_folder():
         messagebox.showerror('打开失败', f'无法打开日志目录：{e}')
 
 
+def _open_misfires_folder():
+    """打开未知确认框样本目录（misfires/），方便把样本反馈给作者改进识别。"""
+    try:
+        d = monitor._misfires_dir()
+        if not d.exists():
+            messagebox.showinfo('样本目录',
+                '目前没有未知确认框样本（一切正常）。\n'
+                '遇到无法识别的确认框时，样本会自动存到这里。')
+            return
+        subprocess.run(['explorer', str(d)], check=False)
+    except Exception as e:
+        messagebox.showerror('打开失败', f'无法打开样本目录：{e}')
+
+
 def _export_events():
     """把当前事件流导出为 CSV 文件。"""
     events = list(monitor.EVENTS)
@@ -227,9 +241,11 @@ def _build_log_page(frame):
 
     btn_bar = ctk.CTkFrame(header, fg_color='transparent')
     btn_bar.pack(side='right')
-    ctk.CTkButton(btn_bar, text='📁 打开日志目录', width=120,
+    ctk.CTkButton(btn_bar, text='📁 日志目录', width=92,
                   command=_open_log_folder).pack(side='left', padx=3)
-    ctk.CTkButton(btn_bar, text='💾 导出事件', width=100,
+    ctk.CTkButton(btn_bar, text='🔬 样本目录', width=92,
+                  command=_open_misfires_folder).pack(side='left', padx=3)
+    ctk.CTkButton(btn_bar, text='💾 导出事件', width=92,
                   command=_export_events).pack(side='left', padx=3)
 
     _log_box = ctk.CTkTextbox(frame, font=ctk.CTkFont(family='Consolas', size=12))
@@ -269,6 +285,7 @@ def _build_settings_page(frame):
         if pause_sw.get():
             monitor.PAUSED.set()
         else:
+            monitor.cancel_pause_timer()  # 手动恢复时取消待定的自动恢复 timer
             monitor.PAUSED.clear()
     pause_sw.configure(command=_toggle_pause)
 
@@ -329,6 +346,62 @@ def _build_settings_page(frame):
 
     ctk.CTkButton(btn_col, text='➕ 添加', width=60, command=_add_ignore).pack(pady=2)
     ctk.CTkButton(btn_col, text='➖ 删除', width=60, command=_remove_ignore).pack(pady=2)
+
+    # ── 自定义错误关键词 ──
+    ctk.CTkLabel(frame, text='自定义错误关键词',
+                 font=ctk.CTkFont(size=14, weight='bold')).pack(anchor='w', pady=(16, 0))
+    ctk.CTkLabel(frame, text='屏幕底部出现以下任一字串时，按「错误」通知你处理'
+                 '（内置已覆盖登录失效/额度耗尽等，这里补充 Claude 改版后的新措辞）',
+                 font=ctk.CTkFont(size=11), text_color='gray',
+                 wraplength=560, justify='left').pack(anchor='w', pady=(2, 4))
+
+    err_frame = ctk.CTkFrame(frame)
+    err_frame.pack(fill='x', pady=4)
+
+    err_listbox = tk.Listbox(err_frame, height=4, font=('Consolas', 10))
+    err_listbox.pack(side='left', fill='both', expand=True, padx=(8, 4), pady=8)
+    for item in cfg.get('extra_error_keywords', []):
+        err_listbox.insert('end', item)
+
+    err_btn_col = ctk.CTkFrame(err_frame, fg_color='transparent')
+    err_btn_col.pack(side='right', padx=(0, 8), pady=8)
+
+    def _add_err():
+        from tkinter import simpledialog
+        kw = simpledialog.askstring('添加错误关键词', '输入错误关键词（大小写不敏感）：')
+        if kw and kw.strip():
+            err_listbox.insert('end', kw.strip())
+            cfg['extra_error_keywords'] = list(err_listbox.get(0, 'end'))
+            config.save(cfg)
+
+    def _remove_err():
+        sel = err_listbox.curselection()
+        if sel:
+            err_listbox.delete(sel[0])
+            cfg['extra_error_keywords'] = list(err_listbox.get(0, 'end'))
+            config.save(cfg)
+
+    ctk.CTkButton(err_btn_col, text='➕ 添加', width=60, command=_add_err).pack(pady=2)
+    ctk.CTkButton(err_btn_col, text='➖ 删除', width=60, command=_remove_err).pack(pady=2)
+
+    # ── 声音提示 ──
+    ctk.CTkLabel(frame, text='声音提示',
+                 font=ctk.CTkFont(size=14, weight='bold')).pack(anchor='w', pady=(16, 0))
+    sound_sw = ctk.CTkSwitch(frame,
+                             text='发通知时播放提示音（错误/多选/未知框；静默时段不响）')
+    sound_sw.pack(anchor='w', pady=4)
+    if cfg.get('sound_enabled', False):
+        sound_sw.select()
+
+    def _toggle_sound():
+        cfg['sound_enabled'] = bool(sound_sw.get())
+        config.save(cfg)
+        if cfg['sound_enabled']:
+            try:
+                monitor._winsound_beep()  # 开启时响一声让用户确认音量
+            except Exception:
+                pass
+    sound_sw.configure(command=_toggle_sound)
 
     # ── 静默时段 ──
     ctk.CTkLabel(frame, text='静默时段',

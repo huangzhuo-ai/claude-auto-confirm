@@ -164,4 +164,34 @@ def test_load_policies_skipped_when_disabled(tmp_path, monkeypatch):
     assert 'win-C' not in monitor._persisted_policies
 
 
+# ── 声音提示开关（sound_enabled）─────────────────────────────────
+def test_sound_played_when_enabled(monkeypatch):
+    import types
+    import config
+    sys.modules.setdefault('win11toast', types.SimpleNamespace(toast=lambda *a, **k: None))
+    import monitor
+
+    monkeypatch.setattr(config, 'load',
+                        lambda: {**config.DEFAULTS, 'sound_enabled': True})
+    calls = []
+    monkeypatch.setattr(monitor, '_winsound_beep', lambda: calls.append(1))
+    monitor._play_sound()
+    assert calls == [1]
+
+
+def test_sound_silent_when_disabled(monkeypatch):
+    import types
+    import config
+    sys.modules.setdefault('win11toast', types.SimpleNamespace(toast=lambda *a, **k: None))
+    import monitor
+
+    monkeypatch.setattr(config, 'load',
+                        lambda: {**config.DEFAULTS, 'sound_enabled': False})
+    calls = []
+    monkeypatch.setattr(monitor, '_winsound_beep', lambda: calls.append(1))
+    monitor._play_sound()
+    assert calls == []
+
+
+
 
