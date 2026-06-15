@@ -71,7 +71,7 @@ ERROR_RE = re.compile(
 CFG = config.load()
 SCAN_INTERVAL = CFG['scan_interval']
 WAITING_NOTIFY_SECONDS = CFG['waiting_notify_seconds']
-IGNORED_TITLES = CFG['ignored_titles']
+# 忽略列表不在此缓存：_is_ignored() 每轮从 config 读，使面板编辑即时生效。
 _last: dict[int, tuple] = {}        # 按 hwnd 去重
 _idle_since: dict[int, float] = {}  # hwnd → 进入空闲态的 time.monotonic()
 DRY_RUN = False                     # --dry-run 时只打印不发键
@@ -421,25 +421,26 @@ def process(win: dict):
     sig = _prompt_signature(text)
 
     if kindp == 'yes':
-        if _last.get(hwnd) != ('yes', sig):
-            if DRY_RUN or policy == 'notify':
-                tag = 'DRY-RUN' if DRY_RUN else '策略=notify'
-                log(f'[AUTO-YES][{tag} 不发键] [{kind}] hwnd={hwnd}')
+        if policy == 'notify' and not DRY_RUN:
+            # 仅通知模式：不回车，改发通知。按 ('notify', sig) 去重，
+            # 同一确认框只通知一次，不随扫描轮次重复弹窗。
+            if _last.get(hwnd) != ('notify', sig):
+                log(f'[AUTO-YES][策略=notify 不发键] [{kind}] hwnd={hwnd}')
+                _notify_async(
+                    f'Claude 需要确认 [{kind}]（仅通知模式）',
+                    f'{win["title"][:40]}\n{sig.strip()[-180:]}',
+                    hwnd,
+                )
+                _last[hwnd] = ('notify', sig)
+                _set_state(win, 'prompt', '仅通知模式')
+                _log_event(win, 'notify', '仅通知模式')
+        elif DRY_RUN:
+            if _last.get(hwnd) != ('yes', sig):
+                log(f'[AUTO-YES][DRY-RUN 不发键] [{kind}] hwnd={hwnd}')
                 _last[hwnd] = ('yes', sig)
-                # notify 策略：改为发通知
-                if policy == 'notify' and not DRY_RUN:
-                    if _last.get(hwnd) != ('notify', sig):
-                        _notify_async(
-                            f'Claude 需要确认 [{kind}]（仅通知模式）',
-                            f'{win["title"][:40]}\n{sig.strip()[-180:]}',
-                            hwnd,
-                        )
-                        _last[hwnd] = ('notify', sig)
-                        _set_state(win, 'prompt', '仅通知模式')
-                        _log_event(win, 'notify', '仅通知模式')
-                else:
-                    _set_state(win, 'prompt', tag)
-            else:
+                _set_state(win, 'prompt', 'DRY-RUN')
+        else:
+            if _last.get(hwnd) != ('yes', sig):
                 r = send_enter(hwnd)
                 msg = {'ok': '✅已确认', 'still': '⚠发了回车但框还在',
                        'nofocus': '⚠无法切到该窗口'}.get(r, r)
@@ -486,8 +487,10 @@ def process(win: dict):
 
 
 def _is_ignored(title: str) -> bool:
-    """窗口标题含任一 IGNORED_TITLES 子串时跳过（不监控、不通知）。"""
-    return any(s and s in title for s in IGNORED_TITLES)
+    """窗口标题含任一忽略子串时跳过（不监控、不通知）。
+    每次从 config 读取，使面板里的编辑无需重启即时生效。"""
+    titles = config.load().get('ignored_titles', [])
+    return any(s and s in title for s in titles)
 
 
 def scan_once():

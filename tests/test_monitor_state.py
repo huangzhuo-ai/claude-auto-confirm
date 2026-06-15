@@ -166,6 +166,19 @@ def test_policy_notify_does_not_confirm(monkeypatch):
     assert monitor._win_state[1]['state'] == 'prompt'
 
 
+def test_policy_notify_dedups_across_rounds(monkeypatch):
+    """回归：notify 策略下，常驻的同一 Yes 框不应每轮重复弹通知。"""
+    _feed(monkeypatch, YES_SCREEN)
+    notifies = []
+    monkeypatch.setattr(monitor, '_notify_async',
+                        lambda *a, **k: notifies.append(a))
+    monitor.set_policy(1, 'notify')
+    for _ in range(5):  # 模拟 5 轮扫描，同一确认框一直挂着
+        monitor.process(_win())
+    assert len(notifies) == 1  # 只通知一次
+    assert sum(1 for e in monitor.EVENTS if e['action'] == 'notify') == 1
+
+
 def test_set_policy_auto_clears(monkeypatch):
     monitor.set_policy(1, 'ignore')
     assert monitor.get_policy(1) == 'ignore'
@@ -293,5 +306,21 @@ def test_counter_resets_today_on_date_change(monkeypatch):
     assert monitor.COUNTERS['today']['notify'] == 0
     # 累计不重置，继续累加
     assert monitor.COUNTERS['total']['auto_yes'] == 6
+
+
+# ── 忽略列表运行时生效 ─────────────────────────────────────────
+def test_ignored_titles_reflects_runtime_config(monkeypatch):
+    """回归：面板编辑忽略列表存盘后，运行中的监控应立即生效，无需重启。"""
+    import config
+    # 模拟启动时配置为空，运行后用户新增了忽略规则
+    cfg_state = {'ignored_titles': []}
+    monkeypatch.setattr(config, 'load', lambda: {**config.DEFAULTS, **cfg_state})
+
+    assert monitor._is_ignored('my secret terminal') is False
+    # 用户在面板里加了规则并存盘
+    cfg_state['ignored_titles'] = ['secret']
+    assert monitor._is_ignored('my secret terminal') is True
+    assert monitor._is_ignored('other window') is False
+
 
 
