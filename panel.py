@@ -290,10 +290,14 @@ def _refresh_log():
 def _build_settings_page(frame):
     cfg = config.load()
 
-    ctk.CTkLabel(frame, text='监控开关',
+    # 设置页内容很多（7个区块），用滚动容器防止超出窗口被截断
+    scroll_frame = ctk.CTkScrollableFrame(frame, fg_color='transparent')
+    scroll_frame.pack(fill='both', expand=True)
+
+    ctk.CTkLabel(scroll_frame, text='监控开关',
                  font=ctk.CTkFont(size=14, weight='bold')).pack(anchor='w')
 
-    pause_sw = ctk.CTkSwitch(frame, text='暂停监控')
+    pause_sw = ctk.CTkSwitch(scroll_frame, text='暂停监控')
     pause_sw.pack(anchor='w', pady=4)
     if monitor.PAUSED.is_set():
         pause_sw.select()
@@ -306,14 +310,14 @@ def _build_settings_page(frame):
             monitor.PAUSED.clear()
     pause_sw.configure(command=_toggle_pause)
 
-    dry_sw = ctk.CTkSwitch(frame, text='干跑（只检测不发键）')
+    dry_sw = ctk.CTkSwitch(scroll_frame, text='干跑（只检测不发键）')
     dry_sw.pack(anchor='w', pady=4)
     if monitor.DRY_RUN:
         dry_sw.select()
     dry_sw.configure(command=lambda: setattr(monitor, 'DRY_RUN', bool(dry_sw.get())))
 
     import autostart
-    auto_sw = ctk.CTkSwitch(frame, text='开机自启')
+    auto_sw = ctk.CTkSwitch(scroll_frame, text='开机自启')
     auto_sw.pack(anchor='w', pady=4)
     if autostart.is_enabled():
         auto_sw.select()
@@ -330,12 +334,12 @@ def _build_settings_page(frame):
     auto_sw.configure(command=_toggle_auto)
 
     # ── 忽略列表 ──
-    ctk.CTkLabel(frame, text='忽略列表',
+    ctk.CTkLabel(scroll_frame, text='忽略列表',
                  font=ctk.CTkFont(size=14, weight='bold')).pack(anchor='w', pady=(16, 0))
-    ctk.CTkLabel(frame, text='含以下字串的窗口标题将被跳过（不监控）',
+    ctk.CTkLabel(scroll_frame, text='含以下字串的窗口标题将被跳过（不监控）',
                  font=ctk.CTkFont(size=11), text_color='gray').pack(anchor='w', pady=(2, 4))
 
-    ignore_frame = ctk.CTkFrame(frame)
+    ignore_frame = ctk.CTkFrame(scroll_frame)
     ignore_frame.pack(fill='x', pady=4)
 
     ignore_listbox = tk.Listbox(ignore_frame, height=4, font=('Consolas', 10))
@@ -365,14 +369,14 @@ def _build_settings_page(frame):
     ctk.CTkButton(btn_col, text='➖ 删除', width=60, command=_remove_ignore).pack(pady=2)
 
     # ── 自定义错误关键词 ──
-    ctk.CTkLabel(frame, text='自定义错误关键词',
+    ctk.CTkLabel(scroll_frame, text='自定义错误关键词',
                  font=ctk.CTkFont(size=14, weight='bold')).pack(anchor='w', pady=(16, 0))
-    ctk.CTkLabel(frame, text='屏幕底部出现以下任一字串时，按「错误」通知你处理'
+    ctk.CTkLabel(scroll_frame, text='屏幕底部出现以下任一字串时，按「错误」通知你处理'
                  '（内置已覆盖登录失效/额度耗尽等，这里补充 Claude 改版后的新措辞）',
                  font=ctk.CTkFont(size=11), text_color='gray',
                  wraplength=560, justify='left').pack(anchor='w', pady=(2, 4))
 
-    err_frame = ctk.CTkFrame(frame)
+    err_frame = ctk.CTkFrame(scroll_frame)
     err_frame.pack(fill='x', pady=4)
 
     err_listbox = tk.Listbox(err_frame, height=4, font=('Consolas', 10))
@@ -402,9 +406,9 @@ def _build_settings_page(frame):
     ctk.CTkButton(err_btn_col, text='➖ 删除', width=60, command=_remove_err).pack(pady=2)
 
     # ── 声音提示 ──
-    ctk.CTkLabel(frame, text='声音提示',
+    ctk.CTkLabel(scroll_frame, text='声音提示',
                  font=ctk.CTkFont(size=14, weight='bold')).pack(anchor='w', pady=(16, 0))
-    sound_sw = ctk.CTkSwitch(frame,
+    sound_sw = ctk.CTkSwitch(scroll_frame,
                              text='发通知时播放提示音（错误/多选/未知框；静默时段不响）')
     sound_sw.pack(anchor='w', pady=4)
     if cfg.get('sound_enabled', False):
@@ -421,17 +425,17 @@ def _build_settings_page(frame):
     sound_sw.configure(command=_toggle_sound)
 
     # ── 静默时段 ──
-    ctk.CTkLabel(frame, text='静默时段',
+    ctk.CTkLabel(scroll_frame, text='静默时段',
                  font=ctk.CTkFont(size=14, weight='bold')).pack(anchor='w', pady=(16, 0))
-    ctk.CTkLabel(frame, text='静默时段内只记录日志，不发送桌面通知',
+    ctk.CTkLabel(scroll_frame, text='静默时段内只记录日志，不发送桌面通知',
                  font=ctk.CTkFont(size=11), text_color='gray').pack(anchor='w', pady=(2, 4))
 
-    quiet_sw = ctk.CTkSwitch(frame, text='启用静默时段')
+    quiet_sw = ctk.CTkSwitch(scroll_frame, text='启用静默时段')
     quiet_sw.pack(anchor='w', pady=4)
     if cfg.get('quiet_hours_enabled', False):
         quiet_sw.select()
 
-    quiet_row = ctk.CTkFrame(frame, fg_color='transparent')
+    quiet_row = ctk.CTkFrame(scroll_frame, fg_color='transparent')
     quiet_row.pack(anchor='w', pady=4, fill='x')
     ctk.CTkLabel(quiet_row, text='从', width=30, anchor='w').pack(side='left', padx=(0, 4))
 
@@ -462,14 +466,14 @@ def _build_settings_page(frame):
     ctk.CTkButton(quiet_row, text='保存', width=60, command=_save_quiet).pack(side='left', padx=(8, 0))
 
     # ── 单窗口策略 ──
-    ctk.CTkLabel(frame, text='单窗口策略',
+    ctk.CTkLabel(scroll_frame, text='单窗口策略',
                  font=ctk.CTkFont(size=14, weight='bold')).pack(anchor='w', pady=(16, 0))
-    ctk.CTkLabel(frame, text='记住每个窗口的策略（自动确认/仅通知/忽略），'
+    ctk.CTkLabel(scroll_frame, text='记住每个窗口的策略（自动确认/仅通知/忽略），'
                  '按窗口标题持久化，重启后标题匹配的窗口自动套用',
                  font=ctk.CTkFont(size=11), text_color='gray',
                  wraplength=560, justify='left').pack(anchor='w', pady=(2, 4))
 
-    persist_sw = ctk.CTkSwitch(frame, text='持久化单窗口策略（关闭则仅本次运行有效，重启即忘）')
+    persist_sw = ctk.CTkSwitch(scroll_frame, text='持久化单窗口策略（关闭则仅本次运行有效，重启即忘）')
     persist_sw.pack(anchor='w', pady=4)
     if cfg.get('persist_policies', True):
         persist_sw.select()
@@ -485,7 +489,7 @@ def _build_settings_page(frame):
     persist_sw.configure(command=_toggle_persist)
 
     # ── 外观 ──
-    ctk.CTkLabel(frame, text='外观',
+    ctk.CTkLabel(scroll_frame, text='外观',
                  font=ctk.CTkFont(size=14, weight='bold')).pack(anchor='w', pady=(16, 0))
 
     _THEME_LABELS = {'跟随系统': 'system', '深色': 'dark', '浅色': 'light'}
@@ -493,7 +497,7 @@ def _build_settings_page(frame):
     _COLOR_LABELS = {'蓝': 'blue', '绿': 'green', '深蓝': 'dark-blue'}
     _COLOR_REV    = {v: k for k, v in _COLOR_LABELS.items()}
 
-    row1 = ctk.CTkFrame(frame, fg_color='transparent')
+    row1 = ctk.CTkFrame(scroll_frame, fg_color='transparent')
     row1.pack(anchor='w', pady=6, fill='x')
     ctk.CTkLabel(row1, text='明暗：', width=60, anchor='w').pack(side='left')
 
@@ -508,7 +512,7 @@ def _build_settings_page(frame):
     theme_menu.set(_THEME_REV.get(cfg.get('theme', 'system'), '跟随系统'))
     theme_menu.pack(side='left')
 
-    row2 = ctk.CTkFrame(frame, fg_color='transparent')
+    row2 = ctk.CTkFrame(scroll_frame, fg_color='transparent')
     row2.pack(anchor='w', pady=6, fill='x')
     ctk.CTkLabel(row2, text='主题色：', width=60, anchor='w').pack(side='left')
 
@@ -525,18 +529,41 @@ def _build_settings_page(frame):
 
 def _build_about_page(frame):
     global _about_status
-    ctk.CTkLabel(frame, text='Claude Auto-Yes',
+    # 关于页内容较多，用滚动容器防止超出窗口被截断
+    scroll_frame = ctk.CTkScrollableFrame(frame, fg_color='transparent')
+    scroll_frame.pack(fill='both', expand=True)
+    ctk.CTkLabel(scroll_frame, text='Claude Auto-Yes',
                  font=ctk.CTkFont(size=20, weight='bold')).pack(anchor='w', pady=(0, 4))
-    ctk.CTkLabel(frame, text=f'版本 v{__version__}').pack(anchor='w')
-    ctk.CTkLabel(frame, text='作者：huangzhuo').pack(anchor='w', pady=(8, 0))
+    ctk.CTkLabel(scroll_frame, text=f'版本 v{__version__}').pack(anchor='w')
+    ctk.CTkLabel(scroll_frame, text='作者：huangzhuo').pack(anchor='w', pady=(8, 0))
 
-    link = ctk.CTkLabel(frame, text='GitHub 项目主页',
+    desc = (
+        '后台监控多个终端里的 Claude Code，自动回应「是否继续」类确认框，\n'
+        '需人工选择的菜单和错误状态则桌面通知（点击通知跳转到对应终端）。'
+    )
+    ctk.CTkLabel(scroll_frame, text=desc, justify='left',
+                 font=ctk.CTkFont(size=11), text_color='gray').pack(anchor='w', pady=(10, 0))
+
+    feats = (
+        '主要功能：\n'
+        '· 自动确认默认选中 Yes 的确认框，后台静默发回车\n'
+        '· 多选菜单 / 错误 / 未知确认框 → 桌面通知，绝不乱按\n'
+        '· 单窗口策略（自动确认 / 仅通知 / 忽略），可按标题持久化\n'
+        '· 统计今日/累计动作次数，事件可导出 CSV\n'
+        '· 静默时段、声音提示、自定义错误关键词、忽略列表\n'
+        '· 定时暂停（30 分 / 1 时 / 2 时）自动恢复\n'
+        '· 开机自启、单实例锁、明暗主题跟随系统'
+    )
+    ctk.CTkLabel(scroll_frame, text=feats, justify='left',
+                 font=ctk.CTkFont(size=11)).pack(anchor='w', pady=(10, 0))
+
+    link = ctk.CTkLabel(scroll_frame, text='GitHub 项目主页',
                         text_color=('blue', '#6db3f2'), cursor='hand2')
-    link.pack(anchor='w', pady=(8, 0))
+    link.pack(anchor='w', pady=(12, 0))
     link.bind('<Button-1>',
               lambda _e: webbrowser.open('https://github.com/huangzhuo-ai/claude-auto-confirm'))
 
-    _about_status = ctk.CTkLabel(frame, text='')
+    _about_status = ctk.CTkLabel(scroll_frame, text='')
     _about_status.pack(anchor='w', pady=(16, 0))
 
     def _manual_check():
@@ -557,7 +584,7 @@ def _build_about_page(frame):
                                         text_color=('gray', 'gray'), cursor='')
         threading.Thread(target=_run, daemon=True).start()
 
-    ctk.CTkButton(frame, text='检查更新', command=_manual_check).pack(anchor='w', pady=(8, 0))
+    ctk.CTkButton(scroll_frame, text='检查更新', command=_manual_check).pack(anchor='w', pady=(8, 0))
 
 
 def _on_update_found(latest):

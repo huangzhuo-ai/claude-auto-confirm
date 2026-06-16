@@ -195,3 +195,25 @@ def test_sound_silent_when_disabled(monkeypatch):
 
 
 
+
+
+# ── 首次启动标志 ────────────────────────────────────────────────
+def test_first_run_true_then_false(tmp_path, monkeypatch):
+    p = tmp_path / 'state.json'
+    monkeypatch.setattr(state, '_state_path', lambda: p)
+    # 全新环境：首次运行应为 True
+    assert state.is_first_run() is True
+    # 标记已启动后，应持久化为 False
+    state.mark_launched()
+    assert state.is_first_run() is False
+
+
+def test_mark_launched_preserves_other_state(tmp_path, monkeypatch):
+    p = tmp_path / 'state.json'
+    monkeypatch.setattr(state, '_state_path', lambda: p)
+    state.save({'counters': {'total': {'auto_yes': 5}}})
+    state.mark_launched()
+    # 既有数据不被覆盖
+    data = state.load()
+    assert data['counters']['total']['auto_yes'] == 5
+    assert data['launched'] is True

@@ -6,6 +6,7 @@ import threading
 import pystray
 from PIL import Image
 import monitor
+from applog import log
 
 
 _stop = threading.Event()
@@ -125,9 +126,24 @@ def run(dry_run: bool = False):
         pystray.MenuItem('开机自启', _toggle_autostart, checked=_is_autostart),
         pystray.MenuItem('退出', _quit),
     )
+    def _setup(icon):
+        # 托盘图标就绪后调用（在 icon 线程内）：首次运行弹引导提示，之后不再弹
+        icon.visible = True
+        try:
+            import state
+            if state.is_first_run():
+                from win11toast import toast as _toast
+                _toast('Claude Auto-Yes 已在后台运行',
+                       '双击托盘图标即可打开面板。需要你处理时会桌面通知。',
+                       icon=monitor._asset_path('icon.png'),
+                       app_id='Claude Auto-Yes')
+                state.mark_launched()
+        except Exception as e:
+            log(f'  [WARN] 首次引导提示失败: {e}')
+
     icon = pystray.Icon(
         'claude-auto-confirm', _make_icon(), 'Claude Auto-Yes', menu)
-    icon.run()
+    icon.run(setup=_setup)
 
 
 if __name__ == '__main__':

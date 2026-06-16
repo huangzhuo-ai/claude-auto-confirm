@@ -41,3 +41,15 @@ def save(data: dict) -> bool:
         return True
     except Exception:
         return False
+
+
+def is_first_run() -> bool:
+    """是否首次运行（state.json 里没有 launched 标志）。用于首次启动引导提示。"""
+    return not bool(load().get('launched'))
+
+
+def mark_launched() -> bool:
+    """标记已启动过（写 launched=True），保留其余状态。下次 is_first_run 即为 False。"""
+    data = load()
+    data['launched'] = True
+    return save(data)
