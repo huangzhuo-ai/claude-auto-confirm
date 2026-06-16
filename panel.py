@@ -3,6 +3,8 @@
 通过 open_panel() 单例开窗，关掉面板不影响后台监控。
 主题跟随系统，设置页可即时切换明暗与主题色。
 """
+import sys
+import os
 import time
 import threading
 import webbrowser
@@ -580,6 +582,17 @@ def _run_panel():
     _root = root
     root.title('Claude Auto-Yes · 状态面板')
     root.geometry('900x560')
+
+    # 设置窗口图标（任务栏/Alt-Tab 显示）：用 AI 生成的品牌图标
+    try:
+        if getattr(sys, 'frozen', False):
+            icon_path = os.path.join(sys._MEIPASS, 'icon.ico')
+        else:
+            icon_path = os.path.join(os.path.dirname(__file__), 'icon.ico')
+        root.iconbitmap(icon_path)
+    except Exception:
+        pass  # 图标加载失败不影响功能
+
     root.withdraw()  # 先隐藏构建（预热场景不闪窗）；_poll_show 见到显示请求再 deiconify
 
     # 关闭按钮：不销毁窗口（销毁后无法在子线程安全重建），改为隐藏；再次双击托盘 deiconify

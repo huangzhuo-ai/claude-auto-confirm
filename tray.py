@@ -12,10 +12,28 @@ _stop = threading.Event()
 
 
 def _make_icon(paused: bool = False) -> Image.Image:
-    """生成托盘图标：渐变紫圆 + 抗锯齿对勾（暂停态为灰底竖条）。
-    统一走 iconart.render，与 exe 图标/通知图标视觉一致。"""
-    import iconart
-    return iconart.render(64, paused=paused)
+    """托盘图标：读取 AI 生成的 icon.png（紫色 >_✓），暂停时叠加灰色滤镜。
+    统一品牌视觉：托盘、GUI、通知、exe 全用同一 AI 图标。"""
+    import os, sys
+    # 解析 icon.png 路径（打包后在 sys._MEIPASS，开发时在项目根）
+    if getattr(sys, 'frozen', False):
+        base = sys._MEIPASS
+    else:
+        base = os.path.dirname(os.path.abspath(__file__))
+    icon_path = os.path.join(base, 'icon.png')
+
+    img = Image.open(icon_path).convert('RGBA')
+    # 托盘用 64px（Windows 标准）
+    if img.size != (64, 64):
+        img = img.resize((64, 64), Image.LANCZOS)
+
+    if paused:
+        # 暂停态：灰色滤镜（降饱和度，保留轮廓）
+        from PIL import ImageEnhance
+        img = ImageEnhance.Color(img).enhance(0.2)  # 几乎完全去色
+        img = ImageEnhance.Brightness(img).enhance(0.85)  # 稍微变暗
+
+    return img
 
 
 def _status_text(_item) -> str:
