@@ -9,7 +9,7 @@ console=False：纯托盘无黑框。日志改由 applog 写到 app.log（与 ex
 """
 from PyInstaller.utils.hooks import collect_all
 
-# 这三个库带隐藏导入/数据文件，静态分析抓不全，全量收集
+# 这三个库带隐藏导入/数据文件,静态分析抓不全，全量收集
 datas, binaries, hiddenimports = [], [], []
 for pkg in ('win11toast', 'uiautomation', 'pystray', 'customtkinter'):
     d, b, h = collect_all(pkg)
@@ -17,9 +17,12 @@ for pkg in ('win11toast', 'uiautomation', 'pystray', 'customtkinter'):
     binaries += b
     hiddenimports += h
 
+# 项目资源文件：icon.png（通知用，Windows Toast 需 PNG）
+datas.append(('icon.png', '.'))
+
 # 本项目的模块多为懒加载（panel 在 tray 里 import、tray 在 monitor.main 里 import），
 # PyInstaller 静态分析抓不到，必须显式声明，否则打包后「打开面板」会崩。
-hiddenimports += ['panel', 'tray', 'config', 'terminal', 'applog', 'version', 'autostart', 'singleton', 'updater', 'state']
+hiddenimports += ['panel', 'tray', 'config', 'terminal', 'applog', 'version', 'autostart', 'singleton', 'updater', 'state', 'iconart']
 
 a = Analysis(
     ['monitor.py'],

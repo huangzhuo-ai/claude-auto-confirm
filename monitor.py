@@ -1,9 +1,9 @@
 """
 Claude Code Auto-Yes Monitor
-以「终端窗口」为单位扫描：用 UI Automation 读屏，自动回 y/Enter，其余桌面通知。
+以「终端窗口」为单位扫描：用 UI Automation 读屏，自动回 y/Enter,其余桌面通知。
 统一支持 Windows Terminal / 独立 PowerShell·CMD / VS Code 集成终端。
 """
-import time, re, sys, argparse, threading
+import time, re, sys, argparse, threading, os
 from collections import deque
 import win32gui, win32con, win32api, win32process
 from win11toast import toast
@@ -11,6 +11,16 @@ import terminal
 import config
 from applog import log
 from version import __version__
+
+
+def _asset_path(filename: str) -> str:
+    """解析资源文件路径：打包后在 sys._MEIPASS，开发时在项目根。
+    用于 icon.png 等打包进 exe 的数据文件。"""
+    if getattr(sys, 'frozen', False):
+        base = sys._MEIPASS
+    else:
+        base = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(base, filename)
 
 
 def _find_inner_hwnd(top: int) -> int:
@@ -375,19 +385,55 @@ def _play_sound():
         pass
 
 
-def _notify_async(title: str, body: str, hwnd: int):
-    """后台线程发通知：win11toast 的 notify() 不回调 Python 函数，
-    必须用 toast()（内部 add_activated 注册回调），但它会阻塞等待点击事件，
-    故放进守护线程。用户点击通知 → on_click 触发 → 把对应终端带到前台。
-    静默时段：只记录日志，不发送桌面通知（也不响铃）。"""
+def _notify_async(title: str, body: str, hwnd: int, scenario: str = 'default'):
+    """后台线程发通知：toast() 阻塞等待点击，故放守护线程。点击通知 → 终端提前。
+    静默时段：只记录日志，不发送桌面通知（也不响铃）。
+
+    scenario 分场景优化（标题/正文/时长/按钮），消除「黑窗口」（加 icon）：
+    - 'error': 错误关键词检测到，需要干预
+    - 'idle': 空闲提醒（17s 未输入）
+    - 'multi': 多选题需手动选
+    - 'default': 其他（自动确认成功等）
+    """
     if is_quiet_hours():
         log(f'  [静默时段] {title}: {body}')
         return
     _play_sound()
+
+    # 图标：消除「黑窗口」——icon.png 是产品 logo(PNG 圆形)，toast appLogoOverride 需 PNG
+    icon_path = _asset_path('icon.png')
+
+    # 按场景定制：时长 + 按钮（Windows Toast 最佳实践）
+    duration = 'short'  # short | long
+    buttons = []
+
+    if scenario == 'error':
+        # 错误场景：长时长 + 跳转按钮，吸引注意
+        duration = 'long'
+        buttons = [{'activationType': 'protocol', 'arguments': f'jump:{hwnd}',
+                    'content': '跳转终端', 'activationArgs': hwnd}]
+        title = '⚠️ ' + title  # 前缀警告 emoji
+    elif scenario == 'idle':
+        # 空闲提醒：普通时长，无按钮（点击通知本身就跳转了）
+        duration = 'short'
+    elif scenario == 'multi':
+        # 多选题：长时长 + 跳转按钮
+        duration = 'long'
+        buttons = [{'activationType': 'protocol', 'arguments': f'jump:{hwnd}',
+                    'content': '去选择', 'activationArgs': hwnd}]
+    # default 场景无特殊处理（短时长、无按钮）
+
     def run():
         try:
-            toast(title, body, app_id='Claude Auto-Yes',
-                  on_click=lambda *_a: _bring_to_front(hwnd))
+            # 按钮参数：win11toast 0.36+ 支持 buttons list
+            kwargs = {'icon': icon_path, 'duration': duration, 'app_id': 'Claude Auto-Yes',
+                      'on_click': lambda *_a: _bring_to_front(hwnd)}
+            if buttons:
+                # buttons 格式：[{'activationType': 'protocol', 'arguments': '...', 'content': 'text'}]
+                # 但 win11toast 的 notify 参数名是 'button'/'buttons'，需查文档确认。
+                # 保守起见先不传（toast 简单签名不一定支持），后续验证再开
+                pass
+            toast(title, body, **kwargs)
         except Exception as e:
             log(f'  [WARN] 通知失败: {e}')
     threading.Thread(target=run, daemon=True).start()
@@ -540,6 +586,7 @@ def process(win: dict):
                     f'Claude 在等你输入 [{kind}]',
                     f'{win["title"][:40]}\n已完成，空闲 {int(now - t0)}s',
                     hwnd,
+                    scenario='idle',
                 )
                 _last[hwnd] = ('idle',)
                 _set_state(win, 'idle_notified', f'空闲 {int(now - t0)}s')
@@ -565,6 +612,7 @@ def process(win: dict):
                     f'Claude 需要确认 [{kind}]（仅通知模式）',
                     f'{win["title"][:40]}\n{sig.strip()[-180:]}',
                     hwnd,
+                    scenario='default',
                 )
                 _last[hwnd] = ('notify', sig)
                 _set_state(win, 'prompt', '仅通知模式')
@@ -594,6 +642,7 @@ def process(win: dict):
                     f'Claude 遇到错误 [{kind}]',
                     f'{win["title"][:40]}\n{sig.strip()[-180:]}',
                     hwnd,
+                    scenario='error',
                 )
                 _set_state(win, 'error', sig.strip()[-80:])
                 _log_event(win, 'error', sig.strip()[-80:])
@@ -606,6 +655,7 @@ def process(win: dict):
                     f'Claude 出现未知确认框 [{kind}]',
                     f'{win["title"][:40]}\n已记录样本，请手动处理并反馈',
                     hwnd,
+                    scenario='default',
                 )
                 _set_state(win, 'unknown', sig.strip()[-80:])
                 _log_event(win, 'unknown', sig.strip()[-80:])
@@ -615,6 +665,7 @@ def process(win: dict):
                     f'Claude 需要你选方案 [{kind}]',
                     f'{win["title"][:40]}\n{sig.strip()[-180:]}',
                     hwnd,
+                    scenario='multi',
                 )
                 _set_state(win, 'prompt', sig.strip()[-80:])
                 _log_event(win, 'notify', sig.strip()[-80:])

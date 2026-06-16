@@ -1,27 +1,18 @@
 """
-一次性脚本：生成 icon.ico（紫底白对勾，与托盘图标 tray._make_icon 视觉统一）。
-用法：python make_icon.py  →  产出 icon.ico（多尺寸，供 PyInstaller 打包引用）。
+一次性脚本：生成 icon.ico（exe/打包用，多尺寸）与 icon.png（通知用，圆形 app logo）。
+图标绘制统一走 iconart.render，与托盘 tray._make_icon 视觉一致。
+用法：python make_icon.py
 """
-from PIL import Image, ImageDraw
-
-
-def _draw(size: int) -> Image.Image:
-    """按比例画一个 size×size 的紫底白对勾图标。"""
-    img = Image.new('RGBA', (size, size), (0, 0, 0, 0))
-    d = ImageDraw.Draw(img)
-    s = size / 64.0  # 以 64 为基准等比缩放
-    d.ellipse([4 * s, 4 * s, 60 * s, 60 * s], fill=(138, 92, 246, 255))
-    d.line([(20 * s, 34 * s), (29 * s, 44 * s), (46 * s, 22 * s)],
-           fill=(255, 255, 255, 255), width=max(2, int(6 * s)))
-    return img
+import iconart
 
 
 def main():
-    sizes = [256, 128, 64, 48, 32, 16]
-    base = _draw(256)
-    base.save('icon.ico', format='ICO',
-              sizes=[(s, s) for s in sizes])
-    print('已生成 icon.ico，尺寸:', sizes)
+    ico_sizes = [256, 128, 64, 48, 32, 16]
+    base = iconart.render(256)
+    base.save('icon.ico', format='ICO', sizes=[(s, s) for s in ico_sizes])
+    # 通知图标：256 PNG（Windows Toast appLogoOverride 用 PNG，.ico 不渲染）
+    base.save('icon.png', format='PNG')
+    print('已生成 icon.ico（尺寸', ico_sizes, '）与 icon.png(256)')
 
 
 if __name__ == '__main__':

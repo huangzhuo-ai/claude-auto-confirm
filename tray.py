@@ -4,7 +4,7 @@
 """
 import threading
 import pystray
-from PIL import Image, ImageDraw
+from PIL import Image
 import monitor
 
 
@@ -12,13 +12,10 @@ _stop = threading.Event()
 
 
 def _make_icon(paused: bool = False) -> Image.Image:
-    """动态生成 64x64 托盘图标：紫色圆底 + 中心字符。暂停时显示灰色。"""
-    img = Image.new('RGBA', (64, 64), (0, 0, 0, 0))
-    d = ImageDraw.Draw(img)
-    color = (120, 120, 120, 255) if paused else (138, 92, 246, 255)
-    d.ellipse([4, 4, 60, 60], fill=color)
-    d.line([(20, 34), (29, 44), (46, 22)], fill=(255, 255, 255, 255), width=6)
-    return img
+    """生成托盘图标：渐变紫圆 + 抗锯齿对勾（暂停态为灰底竖条）。
+    统一走 iconart.render，与 exe 图标/通知图标视觉一致。"""
+    import iconart
+    return iconart.render(64, paused=paused)
 
 
 def _status_text(_item) -> str:
