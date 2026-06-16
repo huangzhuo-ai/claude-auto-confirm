@@ -584,21 +584,17 @@ def _run_panel():
     root.geometry('900x560')
 
     # 设置窗口图标（任务栏/Alt-Tab 显示）：用 AI 生成的品牌图标
-    # 用 iconphoto (PhotoImage) 而非 iconbitmap，避免 Python 解释器图标覆盖
+    # 必须用 iconbitmap（不是 iconphoto），这样会设置 customtkinter 的
+    # _iconbitmap_method_called 标志，阻止 ctk 内部用默认图标覆盖
     try:
         if getattr(sys, 'frozen', False):
-            icon_path = os.path.join(sys._MEIPASS, 'icon.png')
+            icon_path = os.path.join(sys._MEIPASS, 'icon.ico')
         else:
-            icon_path = os.path.join(os.path.dirname(__file__), 'icon.png')
-        from PIL import Image, ImageTk
-        icon_img = Image.open(icon_path)
-        icon_photo = ImageTk.PhotoImage(icon_img)
-        root.iconphoto(True, icon_photo)  # True = 应用到所有顶层窗口
-        # 保持引用避免被 GC（Tk PhotoImage 需要 Python 持有引用）
-        root._icon_photo_ref = icon_photo
-        applog.log(f'  [panel] 窗口图标已设置(iconphoto): {icon_path}')
+            icon_path = os.path.join(os.path.dirname(__file__), 'icon.ico')
+        root.iconbitmap(icon_path)
+        applog.log(f'  [panel] 窗口图标已设置(iconbitmap): {icon_path}')
     except Exception as e:
-        applog.log(f'  [WARN] 窗口图标设置失败: {e}')  # 加载失败不影响功能
+        applog.log(f'  [WARN] 窗口图标设置失败: {e}')
 
     root.withdraw()  # 先隐藏构建（预热场景不闪窗）；_poll_show 见到显示请求再 deiconify
 
@@ -645,9 +641,6 @@ def _run_panel():
                 root.deiconify()
                 root.lift()
                 root.focus_force()
-                # 重新强制设置图标（customtkinter 可能在 deiconify 时重置）
-                if hasattr(root, '_icon_photo_ref'):
-                    root.iconphoto(True, root._icon_photo_ref)
             except Exception:
                 pass
         root.after(200, _poll_show)
@@ -668,16 +661,6 @@ def _run_panel():
 
     root.after(0, _refresh)
     root.after(0, _poll_show)
-
-    # 延迟再次强制设置图标（确保 customtkinter 内部初始化完后覆盖）
-    def _force_icon():
-        if hasattr(root, '_icon_photo_ref'):
-            try:
-                root.iconphoto(True, root._icon_photo_ref)
-                applog.log('  [panel] 延迟强制设置图标（覆盖 customtkinter 默认）')
-            except Exception:
-                pass
-    root.after(500, _force_icon)
 
     try:
         root.mainloop()
