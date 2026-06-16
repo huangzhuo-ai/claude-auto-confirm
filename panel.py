@@ -645,6 +645,9 @@ def _run_panel():
                 root.deiconify()
                 root.lift()
                 root.focus_force()
+                # 重新强制设置图标（customtkinter 可能在 deiconify 时重置）
+                if hasattr(root, '_icon_photo_ref'):
+                    root.iconphoto(True, root._icon_photo_ref)
             except Exception:
                 pass
         root.after(200, _poll_show)
@@ -665,6 +668,17 @@ def _run_panel():
 
     root.after(0, _refresh)
     root.after(0, _poll_show)
+
+    # 延迟再次强制设置图标（确保 customtkinter 内部初始化完后覆盖）
+    def _force_icon():
+        if hasattr(root, '_icon_photo_ref'):
+            try:
+                root.iconphoto(True, root._icon_photo_ref)
+                applog.log('  [panel] 延迟强制设置图标（覆盖 customtkinter 默认）')
+            except Exception:
+                pass
+    root.after(500, _force_icon)
+
     try:
         root.mainloop()
     finally:
