@@ -23,6 +23,21 @@ def _asset_path(filename: str) -> str:
     return os.path.join(base, filename)
 
 
+# 进程级应用 ID：与 toast 通知的 app_id 一致。设置它后 Windows 才把本程序
+# 当成独立应用（任务栏用窗口图标，而非归组到 python.exe 显示解释器图标）。
+APP_USER_MODEL_ID = 'Claude Auto-Yes'
+
+
+def _set_app_id():
+    """设置 Windows AppUserModelID（必须在创建任何窗口前调用，进程级生效）。
+    解决任务栏图标显示成 python.exe/Jupyter 图标的问题。"""
+    try:
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_USER_MODEL_ID)
+    except Exception as e:
+        log(f'  [WARN] 设置 AppUserModelID 失败: {e}')
+
+
 def _find_inner_hwnd(top: int) -> int:
     """找 WT 顶层窗口下真正接收键盘的内层子窗口
     （Windows.UI.Input.InputSite.WindowClass）。找不到则回退到顶层。"""
@@ -743,6 +758,8 @@ def scan_loop(stop_event=None, paused_event=None):
 
 def main():
     global DRY_RUN
+    # 最先设置 AppUserModelID（必须在任何窗口创建前），让任务栏用品牌图标而非 python.exe 图标
+    _set_app_id()
     ap = argparse.ArgumentParser(description='Claude Code Auto-Yes Monitor')
     ap.add_argument('--dry-run', action='store_true',
                     help='只检测并打印，不真正发送按键')
