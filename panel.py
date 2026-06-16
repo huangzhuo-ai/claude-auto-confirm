@@ -584,14 +584,21 @@ def _run_panel():
     root.geometry('900x560')
 
     # 设置窗口图标（任务栏/Alt-Tab 显示）：用 AI 生成的品牌图标
+    # 用 iconphoto (PhotoImage) 而非 iconbitmap，避免 Python 解释器图标覆盖
     try:
         if getattr(sys, 'frozen', False):
-            icon_path = os.path.join(sys._MEIPASS, 'icon.ico')
+            icon_path = os.path.join(sys._MEIPASS, 'icon.png')
         else:
-            icon_path = os.path.join(os.path.dirname(__file__), 'icon.ico')
-        root.iconbitmap(icon_path)
-    except Exception:
-        pass  # 图标加载失败不影响功能
+            icon_path = os.path.join(os.path.dirname(__file__), 'icon.png')
+        from PIL import Image, ImageTk
+        icon_img = Image.open(icon_path)
+        icon_photo = ImageTk.PhotoImage(icon_img)
+        root.iconphoto(True, icon_photo)  # True = 应用到所有顶层窗口
+        # 保持引用避免被 GC（Tk PhotoImage 需要 Python 持有引用）
+        root._icon_photo_ref = icon_photo
+        applog.log(f'  [panel] 窗口图标已设置(iconphoto): {icon_path}')
+    except Exception as e:
+        applog.log(f'  [WARN] 窗口图标设置失败: {e}')  # 加载失败不影响功能
 
     root.withdraw()  # 先隐藏构建（预热场景不闪窗）；_poll_show 见到显示请求再 deiconify
 
