@@ -208,7 +208,10 @@ def _log_event(win: dict, action: str, detail: str = ''):
     # 更新统计计数器
     today = time.strftime('%Y-%m-%d')
     if COUNTERS['today']['date'] != today:
-        # 日期变了，重置今日计数
+        # 日期变了：先归档昨天的统计到历史，再重置今日计数
+        import state
+        old_date = COUNTERS['today']['date']
+        state.archive_daily_stats(old_date, COUNTERS['today'])
         COUNTERS['today'] = {'auto_yes': 0, 'notify': 0, 'error': 0, 'idle': 0, 'date': today}
     if action in COUNTERS['total']:
         COUNTERS['total'][action] += 1

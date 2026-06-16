@@ -107,6 +107,55 @@ def _build_monitor_page(frame):
     _stats_labels['total_idle'] = ctk.CTkLabel(total_card, text='🟠 空闲: 0')
     _stats_labels['total_idle'].pack(anchor='w', padx=8, pady=(1, 6))
 
+    # 最近7天趋势（条形图）
+    trend_frame = ctk.CTkFrame(stats_frame, fg_color='transparent')
+    trend_frame.pack(fill='x', padx=10, pady=(4, 8))
+    ctk.CTkLabel(trend_frame, text='最近7天自动确认趋势',
+                 font=ctk.CTkFont(size=11)).pack(anchor='w', pady=(0, 4))
+
+    _stats_labels['trend_bars'] = []  # 存每天的 (date_lbl, bar, count_lbl) 三元组
+    import state
+    hist = state.get_daily_history(days=7)
+    # 如果历史不足7天，补空白（显示为0）
+    while len(hist) < 7:
+        hist.append({'date': '', 'auto_yes': 0, 'notify': 0, 'error': 0, 'idle': 0})
+
+    # 倒序显示（最老在左，最新在右）
+    hist_reversed = list(reversed(hist))
+    max_count = max((d.get('auto_yes', 0) for d in hist_reversed), default=1)
+
+    bars_row = ctk.CTkFrame(trend_frame, fg_color='transparent')
+    bars_row.pack(fill='x')
+    for day_data in hist_reversed:
+        day_col = ctk.CTkFrame(bars_row, fg_color='transparent')
+        day_col.pack(side='left', fill='both', expand=True, padx=2)
+
+        count = day_data.get('auto_yes', 0)
+        date_str = day_data.get('date', '')
+        date_label = date_str[-5:] if date_str else '─'  # 只显示 MM-DD，空日显示 ─
+
+        # 日期标签（顶部）
+        date_lbl = ctk.CTkLabel(day_col, text=date_label, font=ctk.CTkFont(size=9),
+                                text_color='gray')
+        date_lbl.pack()
+
+        # 条形（用进度条模拟，纵向不支持所以用横向+旋转感觉）
+        # 实际上 customtkinter ProgressBar 只支持横向，用高度模拟纵向条形
+        bar_container = ctk.CTkFrame(day_col, height=60, fg_color='transparent')
+        bar_container.pack(fill='x', pady=2)
+        bar_container.pack_propagate(False)
+
+        # 进度条横向放，value=count/max_count
+        bar = ctk.CTkProgressBar(bar_container, width=40, height=10, orientation='horizontal')
+        bar.pack(anchor='s')
+        bar.set(count / max_count if max_count > 0 else 0)
+
+        # 计数标签（底部）
+        count_lbl = ctk.CTkLabel(day_col, text=str(count), font=ctk.CTkFont(size=10))
+        count_lbl.pack()
+
+        _stats_labels['trend_bars'].append((date_lbl, bar, count_lbl))
+
     # 策略按钮栏
     bar = ctk.CTkFrame(frame, fg_color='transparent')
     bar.pack(fill='x', pady=(0, 8))
@@ -189,6 +238,26 @@ def _refresh_monitor():
         _stats_labels['total_notify'].configure(text=f'🔔 通知: {total["notify"]}')
         _stats_labels['total_error'].configure(text=f'❌ 错误: {total["error"]}')
         _stats_labels['total_idle'].configure(text=f'🟠 空闲: {total["idle"]}')
+
+        # 更新最近7天趋势条形图
+        if 'trend_bars' in _stats_labels:
+            import state
+            hist = state.get_daily_history(days=7)
+            while len(hist) < 7:
+                hist.append({'date': '', 'auto_yes': 0, 'notify': 0, 'error': 0, 'idle': 0})
+            hist_reversed = list(reversed(hist))
+            max_count = max((d.get('auto_yes', 0) for d in hist_reversed), default=1)
+
+            for i, (date_lbl, bar, count_lbl) in enumerate(_stats_labels['trend_bars']):
+                if i < len(hist_reversed):
+                    day_data = hist_reversed[i]
+                    count = day_data.get('auto_yes', 0)
+                    date_str = day_data.get('date', '')
+                    date_label = date_str[-5:] if date_str else '─'
+
+                    date_lbl.configure(text=date_label)
+                    bar.set(count / max_count if max_count > 0 else 0)
+                    count_lbl.configure(text=str(count))
 
 
 def _open_log_folder():

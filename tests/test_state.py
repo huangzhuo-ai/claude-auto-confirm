@@ -217,3 +217,31 @@ def test_mark_launched_preserves_other_state(tmp_path, monkeypatch):
     data = state.load()
     assert data['counters']['total']['auto_yes'] == 5
     assert data['launched'] is True
+
+
+# ── 每日统计归档 ────────────────────────────────────────────────
+def test_archive_and_get_daily_history(tmp_path, monkeypatch):
+    p = tmp_path / 'state.json'
+    monkeypatch.setattr(state, '_state_path', lambda: p)
+    # 归档3天数据
+    state.archive_daily_stats('2025-01-01', {'auto_yes': 5, 'notify': 1, 'error': 0, 'idle': 2})
+    state.archive_daily_stats('2025-01-02', {'auto_yes': 8, 'notify': 0, 'error': 1, 'idle': 1})
+    state.archive_daily_stats('2025-01-03', {'auto_yes': 3, 'notify': 2, 'error': 0, 'idle': 0})
+    # 读取最近7天（实际只有3天）
+    hist = state.get_daily_history(days=7)
+    assert len(hist) == 3
+    assert hist[0] == {'date': '2025-01-03', 'auto_yes': 3, 'notify': 2, 'error': 0, 'idle': 0}
+    assert hist[1] == {'date': '2025-01-02', 'auto_yes': 8, 'notify': 0, 'error': 1, 'idle': 1}
+    assert hist[2] == {'date': '2025-01-01', 'auto_yes': 5, 'notify': 1, 'error': 0, 'idle': 2}
+
+
+def test_daily_history_keeps_only_recent_30_days(tmp_path, monkeypatch):
+    p = tmp_path / 'state.json'
+    monkeypatch.setattr(state, '_state_path', lambda: p)
+    # 归档40天数据（超过30天）
+    for i in range(40):
+        date = f'2025-01-{i+1:02d}' if i < 31 else f'2025-02-{i-30:02d}'
+        state.archive_daily_stats(date, {'auto_yes': i, 'notify': 0, 'error': 0, 'idle': 0})
+    # 只保留最近30天
+    data = state.load()
+    assert len(data.get('daily_history', {})) == 30

@@ -53,3 +53,26 @@ def mark_launched() -> bool:
     data = load()
     data['launched'] = True
     return save(data)
+
+
+def archive_daily_stats(date: str, stats: dict) -> bool:
+    """归档一天的统计到 daily_history（格式：{date: {auto_yes, notify, error, idle}}）。
+    只保留最近30天，更老的自动淘汰。日期格式 'YYYY-MM-DD'。"""
+    data = load()
+    hist = data.setdefault('daily_history', {})
+    # 保存这一天的统计（只保留计数字段，不含 'date' 键本身）
+    hist[date] = {k: v for k, v in stats.items() if k in ('auto_yes', 'notify', 'error', 'idle')}
+    # 只保留最近30天（按日期字符串排序，保留 top 30）
+    if len(hist) > 30:
+        sorted_dates = sorted(hist.keys(), reverse=True)
+        data['daily_history'] = {d: hist[d] for d in sorted_dates[:30]}
+    return save(data)
+
+
+def get_daily_history(days: int = 7) -> list:
+    """读取最近 N 天的统计历史，返回列表 [{date, auto_yes, notify, error, idle}, ...]，
+    按日期倒序（最新在前）。若实际天数不足 N，返回全部。"""
+    data = load()
+    hist = data.get('daily_history', {})
+    sorted_dates = sorted(hist.keys(), reverse=True)[:days]
+    return [{'date': d, **hist[d]} for d in sorted_dates]
