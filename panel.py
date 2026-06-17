@@ -172,10 +172,9 @@ def _build_monitor_page(frame):
     ctk.CTkLabel(chart_toolbar, text='📈 图表视图：',
                  font=ctk.CTkFont(size=11, weight='bold')).pack(side='left', padx=(0, 6))
 
-    # 图表容器（用于切换不同图表）
-    chart_container = ctk.CTkFrame(chart_section, height=350)
+    # 图表容器（用于切换不同图表）- 移除固定高度，让内容自适应
+    chart_container = ctk.CTkFrame(chart_section)
     chart_container.pack(fill='both', expand=True, padx=10, pady=(0, 8))
-    chart_container.pack_propagate(False)
 
     # 存储当前图表画布，用于切换时销毁旧图表
     current_chart = [None]
