@@ -919,6 +919,14 @@ def main():
     load_counters()
     load_policies()
 
+    # 自动备份配置和状态（每天一次）
+    try:
+        import backup
+        backup.auto_backup()
+        log('  [backup] 每日自动备份完成')
+    except Exception as e:
+        log(f'  [WARN] 自动备份失败: {e}')
+
     # 加载高级过滤规则（从配置读取）
     filters.load_from_config(config.load())
 
