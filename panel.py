@@ -731,6 +731,251 @@ def _build_settings_page(frame):
     color_menu.set(_COLOR_REV.get(cfg.get('color', 'blue'), '蓝'))
     color_menu.pack(side='left')
 
+    # ── 配置备份/恢复 ──
+    ctk.CTkLabel(scroll_frame, text='配置备份/恢复',
+                 font=ctk.CTkFont(size=14, weight='bold')).pack(anchor='w', pady=(16, 0))
+    ctk.CTkLabel(scroll_frame, text='自动备份配置和状态文件（每天一次，保留30天）',
+                 font=ctk.CTkFont(size=11), text_color='gray').pack(anchor='w', pady=(2, 4))
+
+    backup_frame = ctk.CTkFrame(scroll_frame)
+    backup_frame.pack(fill='x', pady=4)
+
+    # 备份统计
+    import backup
+    stats = backup.get_backup_stats()
+    stats_text = f"📦 备份数: {stats['total_count']}  "
+    stats_text += f"💾 总大小: {stats['total_size'] / 1024 / 1024:.1f} MB"
+    if stats['newest']:
+        stats_text += f"  🕒 最新: {stats['newest']}"
+
+    ctk.CTkLabel(backup_frame, text=stats_text, font=ctk.CTkFont(size=10),
+                 text_color='gray').pack(anchor='w', padx=10, pady=(8, 4))
+
+    # 按钮栏
+    backup_btn_bar = ctk.CTkFrame(backup_frame, fg_color='transparent')
+    backup_btn_bar.pack(fill='x', padx=10, pady=8)
+
+    def _manual_backup():
+        try:
+            timestamp = datetime.now().strftime('%Y-%m-%d_%H%M%S')
+            backup.auto_backup()
+            messagebox.showinfo('备份', f'手动备份完成！\n时间: {timestamp}')
+        except Exception as e:
+            messagebox.showerror('备份失败', f'备份失败: {e}')
+
+    def _restore_backup():
+        """打开备份恢复对话框。"""
+        backups = backup.list_backups()
+        if not backups:
+            messagebox.showinfo('恢复备份', '没有可用的备份。')
+            return
+
+        # 创建对话框
+        dialog = ctk.CTkToplevel(_root)
+        dialog.title('恢复备份')
+        dialog.geometry('600x400')
+        dialog.transient(_root)
+        dialog.grab_set()
+
+        ctk.CTkLabel(dialog, text='选择要恢复的备份',
+                     font=ctk.CTkFont(size=14, weight='bold')).pack(pady=10)
+
+        # 备份列表
+        list_frame = ctk.CTkFrame(dialog)
+        list_frame.pack(fill='both', expand=True, padx=10, pady=10)
+
+        listbox = tk.Listbox(list_frame, font=('Consolas', 10))
+        listbox.pack(side='left', fill='both', expand=True)
+
+        scrollbar = ttk.Scrollbar(list_frame, orient='vertical', command=listbox.yview)
+        scrollbar.pack(side='right', fill='y')
+        listbox.config(yscrollcommand=scrollbar.set)
+
+        for b in backups:
+            display = f"{b['date']} {b['time']}  |  {len(b['files'])}文件  |  {b['size']/1024:.1f}KB"
+            listbox.insert('end', display)
+
+        # 按钮栏
+        btn_frame = ctk.CTkFrame(dialog, fg_color='transparent')
+        btn_frame.pack(pady=10)
+
+        def _do_restore():
+            sel = listbox.curselection()
+            if not sel:
+                messagebox.showwarning('恢复备份', '请先选择一个备份。')
+                return
+
+            backup_info = backups[sel[0]]
+            if not messagebox.askyesno('确认恢复',
+                                       f'确定要恢复到 {backup_info["date"]} {backup_info["time"]} 的备份吗？\n'
+                                       f'当前配置将被覆盖（会先自动备份当前状态）。'):
+                return
+
+            success, msg = backup.restore_backup(backup_info['name'])
+            if success:
+                messagebox.showinfo('恢复成功', msg + '\n\n请重启程序使配置生效。')
+                dialog.destroy()
+            else:
+                messagebox.showerror('恢复失败', msg)
+
+        def _do_export():
+            sel = listbox.curselection()
+            if not sel:
+                messagebox.showwarning('导出备份', '请先选择一个备份。')
+                return
+
+            backup_info = backups[sel[0]]
+            output_path = filedialog.asksaveasfilename(
+                title='导出备份',
+                defaultextension='.zip',
+                filetypes=[('ZIP文件', '*.zip'), ('所有文件', '*.*')],
+                initialfile=f"{backup_info['name']}.zip"
+            )
+            if not output_path:
+                return
+
+            success, msg = backup.export_backup(backup_info['name'], output_path)
+            if success:
+                messagebox.showinfo('导出成功', msg)
+            else:
+                messagebox.showerror('导出失败', msg)
+
+        def _do_delete():
+            sel = listbox.curselection()
+            if not sel:
+                messagebox.showwarning('删除备份', '请先选择一个备份。')
+                return
+
+            backup_info = backups[sel[0]]
+            if not messagebox.askyesno('确认删除',
+                                       f'确定要删除 {backup_info["date"]} {backup_info["time"]} 的备份吗？'):
+                return
+
+            success, msg = backup.delete_backup(backup_info['name'])
+            if success:
+                messagebox.showinfo('删除成功', msg)
+                listbox.delete(sel[0])
+                backups.pop(sel[0])
+            else:
+                messagebox.showerror('删除失败', msg)
+
+        ctk.CTkButton(btn_frame, text='恢复', width=80, command=_do_restore).pack(side='left', padx=5)
+        ctk.CTkButton(btn_frame, text='导出', width=80, command=_do_export).pack(side='left', padx=5)
+        ctk.CTkButton(btn_frame, text='删除', width=80, command=_do_delete).pack(side='left', padx=5)
+        ctk.CTkButton(btn_frame, text='关闭', width=80, command=dialog.destroy).pack(side='left', padx=5)
+
+    def _import_backup():
+        """导入备份zip文件。"""
+        zip_path = filedialog.askopenfilename(
+            title='导入备份',
+            filetypes=[('ZIP文件', '*.zip'), ('所有文件', '*.*')]
+        )
+        if not zip_path:
+            return
+
+        success, msg, backup_name = backup.import_backup(zip_path)
+        if success:
+            messagebox.showinfo('导入成功', msg + '\n\n可在「恢复备份」中查看和使用。')
+        else:
+            messagebox.showerror('导入失败', msg)
+
+    ctk.CTkButton(backup_btn_bar, text='🔄 手动备份', width=100,
+                  command=_manual_backup).pack(side='left', padx=3)
+    ctk.CTkButton(backup_btn_bar, text='📂 恢复备份', width=100,
+                  command=_restore_backup).pack(side='left', padx=3)
+    ctk.CTkButton(backup_btn_bar, text='📥 导入备份', width=100,
+                  command=_import_backup).pack(side='left', padx=3)
+
+    # ── 统计报告生成 ──
+    ctk.CTkLabel(scroll_frame, text='统计报告生成',
+                 font=ctk.CTkFont(size=14, weight='bold')).pack(anchor='w', pady=(16, 0))
+    ctk.CTkLabel(scroll_frame, text='生成周报/月报，导出为Markdown或HTML格式',
+                 font=ctk.CTkFont(size=11), text_color='gray').pack(anchor='w', pady=(2, 4))
+
+    report_frame = ctk.CTkFrame(scroll_frame)
+    report_frame.pack(fill='x', pady=4)
+
+    report_btn_bar = ctk.CTkFrame(report_frame, fg_color='transparent')
+    report_btn_bar.pack(fill='x', padx=10, pady=8)
+
+    def _generate_report(days, format_type):
+        """生成并保存报告。"""
+        try:
+            import reports
+            content = reports.generate_report(days=days, format=format_type)
+
+            # 保存文件
+            report_type = '周报' if days == 7 else '月报'
+            ext = 'md' if format_type == 'markdown' else 'html'
+            default_name = f'{report_type}_{datetime.now().strftime("%Y%m%d")}.{ext}'
+
+            filepath = filedialog.asksaveasfilename(
+                title=f'保存{report_type}',
+                defaultextension=f'.{ext}',
+                filetypes=[(f'{ext.upper()}文件', f'*.{ext}'), ('所有文件', '*.*')],
+                initialfile=default_name
+            )
+
+            if not filepath:
+                return
+
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write(content)
+
+            messagebox.showinfo('报告生成',
+                               f'{report_type}已生成！\n\n文件: {filepath}')
+
+            # 询问是否打开
+            if messagebox.askyesno('打开报告', '是否打开生成的报告？'):
+                import subprocess
+                import os
+                os.startfile(filepath)  # Windows安全的打开文件方式
+
+        except Exception as e:
+            messagebox.showerror('生成失败', f'报告生成失败: {e}')
+
+    ctk.CTkButton(report_btn_bar, text='📄 周报(Markdown)', width=140,
+                  command=lambda: _generate_report(7, 'markdown')).pack(side='left', padx=3)
+    ctk.CTkButton(report_btn_bar, text='📄 月报(Markdown)', width=140,
+                  command=lambda: _generate_report(30, 'markdown')).pack(side='left', padx=3)
+    ctk.CTkButton(report_btn_bar, text='🌐 周报(HTML)', width=120,
+                  command=lambda: _generate_report(7, 'html')).pack(side='left', padx=3)
+    ctk.CTkButton(report_btn_bar, text='🌐 月报(HTML)', width=120,
+                  command=lambda: _generate_report(30, 'html')).pack(side='left', padx=3)
+
+    # ── 性能监控 ──
+    ctk.CTkLabel(scroll_frame, text='性能监控',
+                 font=ctk.CTkFont(size=14, weight='bold')).pack(anchor='w', pady=(16, 0))
+    ctk.CTkLabel(scroll_frame, text='显示程序资源占用（CPU/内存）',
+                 font=ctk.CTkFont(size=11), text_color='gray').pack(anchor='w', pady=(2, 4))
+
+    perf_frame = ctk.CTkFrame(scroll_frame)
+    perf_frame.pack(fill='x', pady=4)
+
+    # 性能指标显示
+    perf_info_frame = ctk.CTkFrame(perf_frame, fg_color='transparent')
+    perf_info_frame.pack(fill='x', padx=10, pady=8)
+
+    try:
+        import resource_monitor
+        stats = resource_monitor.get_stats()
+
+        info_text = f"📊 当前 CPU: {stats['current_cpu']:.1f}%  |  内存: {stats['current_memory_mb']:.1f}MB\n"
+        info_text += f"📈 60秒平均 CPU: {stats['avg_cpu_60s']:.1f}%  |  内存: {stats['avg_memory_60s_mb']:.1f}MB\n"
+        info_text += f"🔝 60秒峰值 CPU: {stats['max_cpu_60s']:.1f}%  |  内存: {stats['max_memory_60s_mb']:.1f}MB"
+
+        if stats['degraded']:
+            info_text += f"\n⚠️ 降级运行: {stats['degraded_reason']}"
+
+        perf_label = ctk.CTkLabel(perf_info_frame, text=info_text,
+                                  font=ctk.CTkFont(family='Consolas', size=10),
+                                  justify='left')
+        perf_label.pack(anchor='w')
+
+    except Exception as e:
+        ctk.CTkLabel(perf_info_frame, text=f'性能监控未启用: {e}',
+                     text_color='gray', font=ctk.CTkFont(size=10)).pack(anchor='w')
+
 
 def _build_notification_history_page(frame):
     """构建通知历史页：显示所有通知类型的事件（notify/error/idle/unknown），
