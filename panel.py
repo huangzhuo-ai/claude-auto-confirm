@@ -908,7 +908,9 @@ def _run_panel():
     root = ctk.CTk()
     _root = root
     root.title('Claude Auto-Yes · 状态面板')
-    root.geometry('900x560')
+    root.geometry('900x700')  # 增加默认高度以容纳图表
+    root.minsize(800, 600)    # 设置最小尺寸
+    root.resizable(True, True)  # 允许调整大小
 
     # 设置窗口图标（任务栏/Alt-Tab 显示）：用 AI 生成的品牌图标
     # 必须用 iconbitmap（不是 iconphoto），这样会设置 customtkinter 的
