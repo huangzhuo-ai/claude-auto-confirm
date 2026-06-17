@@ -761,10 +761,31 @@ def _status(line: str):
 def scan_loop(stop_event=None, paused_event=None):
     """循环扫描。stop_event 置位时退出；paused_event 兼容旧签名但已弃用——
     统一改用模块级 PAUSED Event（tray / panel 共用）。"""
+    # 资源监控采样计数器
+    sample_counter = 0
+
     while True:
         if stop_event is not None and stop_event.is_set():
             return
         try:
+            # 资源监控采样（每次扫描都采样）
+            try:
+                import resource_monitor
+                resource_monitor.sample()
+
+                # 检查是否需要降级
+                if sample_counter % 10 == 0:  # 每10次扫描检查一次
+                    need_degrade, reason = resource_monitor.check_degradation()
+                    if need_degrade:
+                        log(f'[WARN] 资源占用过高，启动降级措施: {reason}')
+                        increment = resource_monitor.apply_mitigation()
+                        # 注意：这里不实际修改SCAN_INTERVAL，只记录建议
+                        log(f'  建议增加扫描间隔 +{increment}s（需重启生效）')
+
+                sample_counter += 1
+            except Exception:
+                pass  # 资源监控失败不影响主功能
+
             if PAUSED.is_set():
                 _status('[PAUSED] 已暂停                    ')
             else:
@@ -776,6 +797,7 @@ def scan_loop(stop_event=None, paused_event=None):
         except Exception as e:
             log(f'[ERROR] {e}')
         time.sleep(SCAN_INTERVAL)
+
 
 
 def main():

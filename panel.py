@@ -886,6 +886,96 @@ def _build_settings_page(frame):
     ctk.CTkButton(backup_btn_bar, text='📥 导入备份', width=100,
                   command=_import_backup).pack(side='left', padx=3)
 
+    # ── 统计报告生成 ──
+    ctk.CTkLabel(scroll_frame, text='统计报告生成',
+                 font=ctk.CTkFont(size=14, weight='bold')).pack(anchor='w', pady=(16, 0))
+    ctk.CTkLabel(scroll_frame, text='生成周报/月报，导出为Markdown或HTML格式',
+                 font=ctk.CTkFont(size=11), text_color='gray').pack(anchor='w', pady=(2, 4))
+
+    report_frame = ctk.CTkFrame(scroll_frame)
+    report_frame.pack(fill='x', pady=4)
+
+    report_btn_bar = ctk.CTkFrame(report_frame, fg_color='transparent')
+    report_btn_bar.pack(fill='x', padx=10, pady=8)
+
+    def _generate_report(days, format_type):
+        """生成并保存报告。"""
+        try:
+            import reports
+            content = reports.generate_report(days=days, format=format_type)
+
+            # 保存文件
+            report_type = '周报' if days == 7 else '月报'
+            ext = 'md' if format_type == 'markdown' else 'html'
+            default_name = f'{report_type}_{datetime.now().strftime("%Y%m%d")}.{ext}'
+
+            filepath = filedialog.asksaveasfilename(
+                title=f'保存{report_type}',
+                defaultextension=f'.{ext}',
+                filetypes=[(f'{ext.upper()}文件', f'*.{ext}'), ('所有文件', '*.*')],
+                initialfile=default_name
+            )
+
+            if not filepath:
+                return
+
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write(content)
+
+            messagebox.showinfo('报告生成',
+                               f'{report_type}已生成！\n\n文件: {filepath}')
+
+            # 询问是否打开
+            if messagebox.askyesno('打开报告', '是否打开生成的报告？'):
+                import subprocess
+                import os
+                os.startfile(filepath)  # Windows安全的打开文件方式
+
+        except Exception as e:
+            messagebox.showerror('生成失败', f'报告生成失败: {e}')
+
+    ctk.CTkButton(report_btn_bar, text='📄 周报(Markdown)', width=140,
+                  command=lambda: _generate_report(7, 'markdown')).pack(side='left', padx=3)
+    ctk.CTkButton(report_btn_bar, text='📄 月报(Markdown)', width=140,
+                  command=lambda: _generate_report(30, 'markdown')).pack(side='left', padx=3)
+    ctk.CTkButton(report_btn_bar, text='🌐 周报(HTML)', width=120,
+                  command=lambda: _generate_report(7, 'html')).pack(side='left', padx=3)
+    ctk.CTkButton(report_btn_bar, text='🌐 月报(HTML)', width=120,
+                  command=lambda: _generate_report(30, 'html')).pack(side='left', padx=3)
+
+    # ── 性能监控 ──
+    ctk.CTkLabel(scroll_frame, text='性能监控',
+                 font=ctk.CTkFont(size=14, weight='bold')).pack(anchor='w', pady=(16, 0))
+    ctk.CTkLabel(scroll_frame, text='显示程序资源占用（CPU/内存）',
+                 font=ctk.CTkFont(size=11), text_color='gray').pack(anchor='w', pady=(2, 4))
+
+    perf_frame = ctk.CTkFrame(scroll_frame)
+    perf_frame.pack(fill='x', pady=4)
+
+    # 性能指标显示
+    perf_info_frame = ctk.CTkFrame(perf_frame, fg_color='transparent')
+    perf_info_frame.pack(fill='x', padx=10, pady=8)
+
+    try:
+        import resource_monitor
+        stats = resource_monitor.get_stats()
+
+        info_text = f"📊 当前 CPU: {stats['current_cpu']:.1f}%  |  内存: {stats['current_memory_mb']:.1f}MB\n"
+        info_text += f"📈 60秒平均 CPU: {stats['avg_cpu_60s']:.1f}%  |  内存: {stats['avg_memory_60s_mb']:.1f}MB\n"
+        info_text += f"🔝 60秒峰值 CPU: {stats['max_cpu_60s']:.1f}%  |  内存: {stats['max_memory_60s_mb']:.1f}MB"
+
+        if stats['degraded']:
+            info_text += f"\n⚠️ 降级运行: {stats['degraded_reason']}"
+
+        perf_label = ctk.CTkLabel(perf_info_frame, text=info_text,
+                                  font=ctk.CTkFont(family='Consolas', size=10),
+                                  justify='left')
+        perf_label.pack(anchor='w')
+
+    except Exception as e:
+        ctk.CTkLabel(perf_info_frame, text=f'性能监控未启用: {e}',
+                     text_color='gray', font=ctk.CTkFont(size=10)).pack(anchor='w')
+
 
 def _build_notification_history_page(frame):
     """构建通知历史页：显示所有通知类型的事件（notify/error/idle/unknown），
