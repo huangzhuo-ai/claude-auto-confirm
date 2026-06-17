@@ -14,11 +14,25 @@ DEFAULTS = {
     'persist_policies': True,      # 单窗口策略是否持久化（按标题，跨重启套用）
     'extra_error_keywords': [],    # 额外的错误关键词（除内置外，命中即通知）
     'sound_enabled': False,        # 通知时是否播放提示音
+    'hotkeys': {                   # 全局快捷键配置
+        'enabled': True,
+        'pause_resume': 'ctrl+alt+p',
+        'open_panel': 'ctrl+alt+c',
+        'mute_hotkeys': 'ctrl+alt+m',
+    },
+    'filters': [],                 # 高级过滤规则（list[dict]）
 }
+
+# 自定义配置路径（供 profiles.py 切换方案用）
+_custom_path = None
 
 
 def _config_path() -> pathlib.Path:
-    """config.toml 与可执行文件/脚本同目录（兼容 PyInstaller 打包）。"""
+    """config.toml 与可执行文件/脚本同目录（兼容 PyInstaller 打包）。
+    若 profiles.py 设置了 _custom_path，优先返回自定义路径（用于方案切换）。"""
+    global _custom_path
+    if _custom_path is not None:
+        return _custom_path
     import sys
     if getattr(sys, 'frozen', False):
         base = pathlib.Path(sys.executable).parent

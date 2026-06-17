@@ -1,5 +1,5 @@
 """
-状态面板（CustomTkinter）：左侧边栏导航 4 个页面——监控/日志/设置/关于。
+状态面板（CustomTkinter）：左侧边栏导航 5 个页面——监控/日志/通知历史/设置/关于。
 通过 open_panel() 单例开窗，关掉面板不影响后台监控。
 主题跟随系统，设置页可即时切换明暗与主题色。
 """
@@ -18,6 +18,9 @@ import monitor
 import config
 import updater
 import applog
+import hotkeys
+import profiles
+import filters
 from version import __version__
 
 _STATE_ICONS = {
@@ -41,6 +44,9 @@ _log_box = None
 _log_snapshot = [None]
 _about_status = None
 _stats_labels = {}  # 统计标签缓存
+_notification_tree = None  # 通知历史表格
+_notification_filter = None  # 通知过滤下拉框
+_notification_search = None  # 通知搜索输入框
 
 
 def open_panel():
@@ -596,6 +602,100 @@ def _build_settings_page(frame):
     color_menu.pack(side='left')
 
 
+def _build_notification_history_page(frame):
+    """构建通知历史页：显示所有通知类型的事件（notify/error/idle/unknown），
+    支持按类型过滤和关键词搜索。"""
+    global _notification_tree, _notification_filter, _notification_search
+
+    header = ctk.CTkFrame(frame, fg_color='transparent')
+    header.pack(fill='x', pady=(0, 8))
+    ctk.CTkLabel(header, text='通知历史',
+                 font=ctk.CTkFont(size=14, weight='bold')).pack(side='left')
+
+    # 按钮栏
+    btn_bar = ctk.CTkFrame(header, fg_color='transparent')
+    btn_bar.pack(side='right')
+
+    # 过滤下拉框
+    filter_options = ['全部', '通知', '错误', '空闲', '未知']
+    _notification_filter = ctk.CTkOptionMenu(btn_bar, values=filter_options, width=80)
+    _notification_filter.set('全部')
+    _notification_filter.pack(side='left', padx=3)
+
+    # 搜索框
+    _notification_search = ctk.CTkEntry(btn_bar, width=120, placeholder_text='搜索关键词')
+    _notification_search.pack(side='left', padx=3)
+
+    def _do_filter():
+        _refresh_notification_history()
+
+    ctk.CTkButton(btn_bar, text='🔍 筛选', width=60, command=_do_filter).pack(side='left', padx=3)
+
+    def _clear_history():
+        if messagebox.askyesno('清空历史', '确定要清空所有通知历史记录吗？'):
+            monitor.EVENTS.clear()
+            _refresh_notification_history()
+
+    ctk.CTkButton(btn_bar, text='🗑️ 清空', width=60, command=_clear_history).pack(side='left', padx=3)
+
+    # 表格
+    cols = ('time', 'action', 'kind', 'title', 'detail')
+    _notification_tree = ttk.Treeview(frame, columns=cols, show='headings',
+                                      selectmode='browse', height=18)
+    for col, head, w in [('time', '时间', 90), ('action', '类型', 100),
+                         ('kind', '终端', 80), ('title', '标题', 200),
+                         ('detail', '详情', 250)]:
+        _notification_tree.heading(col, text=head)
+        _notification_tree.column(col, width=w, anchor='w')
+    _notification_tree.pack(fill='both', expand=True)
+
+    # 双击跳转到对应终端（如果还存在）
+    def _on_dbl(_e):
+        item = _notification_tree.focus()
+        if item:
+            try:
+                hwnd = int(_notification_tree.item(item, 'values')[4])  # 隐藏列存 hwnd
+                monitor._bring_to_front(hwnd)
+            except Exception:
+                pass
+
+    _notification_tree.bind('<Double-1>', _on_dbl)
+
+
+def _refresh_notification_history():
+    """刷新通知历史表格：过滤出通知类事件，应用筛选和搜索。"""
+    if _notification_tree is None:
+        return
+
+    # 获取所有通知类事件（notify/error/idle/unknown）
+    all_events = [e for e in monitor.EVENTS if e['action'] in ('notify', 'error', 'idle', 'unknown')]
+
+    # 应用类型过滤
+    filter_val = _notification_filter.get() if _notification_filter else '全部'
+    filter_map = {'通知': 'notify', '错误': 'error', '空闲': 'idle', '未知': 'unknown'}
+    if filter_val != '全部' and filter_val in filter_map:
+        all_events = [e for e in all_events if e['action'] == filter_map[filter_val]]
+
+    # 应用搜索
+    search_kw = _notification_search.get().strip().lower() if _notification_search else ''
+    if search_kw:
+        all_events = [e for e in all_events
+                      if search_kw in e['title'].lower() or search_kw in e.get('detail', '').lower()]
+
+    # 清空表格
+    for iid in _notification_tree.get_children():
+        _notification_tree.delete(iid)
+
+    # 填充表格（倒序：最新在上）
+    action_icons = {'notify': '🔔 通知', 'error': '❌ 错误', 'idle': '🟠 空闲', 'unknown': '⚠️ 未知'}
+    for ev in reversed(all_events[-200:]):  # 只显示最近 200 条
+        ts = time.strftime('%H:%M:%S', time.localtime(ev['ts']))
+        action = action_icons.get(ev['action'], ev['action'])
+        vals = (ts, action, ev['kind'], ev['title'][:30], ev.get('detail', '')[:60])
+        # iid 用 hwnd，但表格不显示，方便双击跳转
+        _notification_tree.insert('', 'end', iid=str(ev['hwnd']), values=vals)
+
+
 def _build_about_page(frame):
     global _about_status
     # 关于页内容较多，用滚动容器防止超出窗口被截断
@@ -669,7 +769,7 @@ def _on_update_found(latest):
 # ── 主面板入口 ────────────────────────────────────────────────────────────────
 
 def _run_panel():
-    global _root, _tree, _log_box, _stats_labels
+    global _root, _tree, _log_box, _stats_labels, _notification_tree, _notification_filter, _notification_search
     cfg = config.load()
     ctk.set_appearance_mode(_THEME_MAP.get(cfg.get('theme', 'system'), 'system'))
     ctk.set_default_color_theme(_COLOR_MAP.get(cfg.get('color', 'blue'), 'blue'))
@@ -707,14 +807,14 @@ def _run_panel():
     content.pack(side='left', fill='both', expand=True)
 
     pages = {name: ctk.CTkFrame(content, fg_color='transparent')
-             for name in ('监控', '日志', '设置', '关于')}
+             for name in ('监控', '日志', '通知历史', '设置', '关于')}
 
     def show(name):
         for p in pages.values():
             p.pack_forget()
         pages[name].pack(fill='both', expand=True, padx=16, pady=16)
 
-    for name in ('监控', '日志', '设置', '关于'):
+    for name in ('监控', '日志', '通知历史', '设置', '关于'):
         ctk.CTkButton(sidebar, text=name, anchor='w',
                       command=lambda n=name: show(n)).pack(fill='x', padx=10, pady=3)
 
@@ -723,6 +823,7 @@ def _run_panel():
 
     _build_monitor_page(pages['监控'])
     _build_log_page(pages['日志'])
+    _build_notification_history_page(pages['通知历史'])
     _build_settings_page(pages['设置'])
     _build_about_page(pages['关于'])
 
@@ -753,6 +854,7 @@ def _run_panel():
                 else f'监控中 · {monitor.STATS["windows"]} 个终端')
             _refresh_monitor()
             _refresh_log()
+            _refresh_notification_history()
         root.after(1000, _refresh)
 
     root.after(0, _refresh)
@@ -766,3 +868,6 @@ def _run_panel():
         _tree = None
         _log_box = None
         _stats_labels = {}
+        _notification_tree = None
+        _notification_filter = None
+        _notification_search = None

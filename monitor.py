@@ -9,6 +9,7 @@ import win32gui, win32con, win32api, win32process
 from win11toast import toast
 import terminal
 import config
+import filters
 from applog import log
 from version import __version__
 
@@ -217,6 +218,13 @@ def _log_event(win: dict, action: str, detail: str = ''):
         COUNTERS['total'][action] += 1
         COUNTERS['today'][action] += 1
         save_counters()  # 落盘，跨重启保留
+
+    # 更新按窗口统计和按小时统计
+    import state
+    window_key = f"{win['kind']}:{win['title'][:30]}"  # 窗口标识：kind:标题前30字符
+    state.update_window_stats(window_key, action)
+    hour = time.localtime().tm_hour
+    state.update_hourly_stats(hour, action)
 
 
 def get_policy(hwnd: int) -> str:
@@ -589,6 +597,17 @@ def process(win: dict):
         _win_state.pop(hwnd, None)
         return
 
+    # 高级过滤规则：在单窗口策略后、检测确认框前执行。
+    # 规则优先级高于单窗口策略（除了 ignore，已提前跳过）。
+    filter_action = filters.match(win.get('title', ''), text)
+    if filter_action:
+        # 过滤规则命中，临时覆盖策略（仅本轮生效，不改 _policy）
+        policy = filter_action
+        if policy == 'ignore':
+            _set_state(win, 'ignored', '过滤规则')
+            _idle_since.pop(hwnd, None)
+            return
+
     kindp = detect_prompt(text)
     if not kindp:
         # 无确认框：检测「空闲等待输入」是否已持续超过阈值，是则通知一次
@@ -770,8 +789,111 @@ def main():
                     help='不启用系统托盘，退化为纯命令行模式')
     ap.add_argument('--allow-multi', action='store_true',
                     help='允许多开（跳过单实例锁，调试用）')
+    ap.add_argument('--config', type=str, metavar='PATH',
+                    help='指定配置文件路径（默认：config.toml）')
+    ap.add_argument('--profile', type=str, metavar='NAME',
+                    help='加载指定配置方案（如 --profile work 加载 config.work.toml）')
+    ap.add_argument('--stats', action='store_true',
+                    help='打印统计信息后退出')
+    ap.add_argument('--reset-stats', action='store_true',
+                    help='重置统计数据（需确认）')
+    ap.add_argument('--export-events', type=str, metavar='PATH',
+                    help='导出事件日志到CSV文件')
     args = ap.parse_args()
     DRY_RUN = args.dry_run
+
+    # 处理 --config 参数（自定义配置路径）
+    if args.config:
+        import pathlib
+        config._custom_path = pathlib.Path(args.config).resolve()
+        if not config._custom_path.exists():
+            log(f'错误：配置文件不存在: {config._custom_path}')
+            sys.exit(1)
+        log(f'使用自定义配置: {config._custom_path}')
+
+    # 处理 --profile 参数（加载指定方案）
+    if args.profile:
+        import profiles
+        if not profiles.switch_profile(args.profile):
+            log(f'错误：配置方案不存在: {args.profile}')
+            sys.exit(1)
+        log(f'已切换到方案: {args.profile}')
+
+    # 处理 --stats 参数（打印统计后退出）
+    if args.stats:
+        import state
+        data = state.load()
+        counters = data.get('counters', {})
+        today = counters.get('today', {})
+        total = counters.get('total', {})
+        print('=== Claude Auto-Yes 统计信息 ===')
+        print(f'今日 ({today.get("date", "N/A")}):')
+        print(f'  自动确认: {today.get("auto_yes", 0)}')
+        print(f'  通知: {today.get("notify", 0)}')
+        print(f'  错误: {today.get("error", 0)}')
+        print(f'  空闲: {today.get("idle", 0)}')
+        print(f'累计:')
+        print(f'  自动确认: {total.get("auto_yes", 0)}')
+        print(f'  通知: {total.get("notify", 0)}')
+        print(f'  错误: {total.get("error", 0)}')
+        print(f'  空闲: {total.get("idle", 0)}')
+        print(f'最近7天历史:')
+        hist = state.get_daily_history(7)
+        for day in hist:
+            print(f'  {day["date"]}: 确认={day.get("auto_yes", 0)} '
+                  f'通知={day.get("notify", 0)} 错误={day.get("error", 0)} 空闲={day.get("idle", 0)}')
+        sys.exit(0)
+
+    # 处理 --reset-stats 参数（重置统计，需确认）
+    if args.reset_stats:
+        import state
+        if sys.stdout is not None:
+            ans = input('确认重置所有统计数据？(yes/no): ').strip().lower()
+            if ans != 'yes':
+                print('已取消')
+                sys.exit(0)
+        data = state.load()
+        data['counters'] = {
+            'total': {'auto_yes': 0, 'notify': 0, 'error': 0, 'idle': 0},
+            'today': {'auto_yes': 0, 'notify': 0, 'error': 0, 'idle': 0,
+                      'date': time.strftime('%Y-%m-%d')},
+        }
+        data['daily_history'] = {}
+        data['window_stats'] = {}
+        data['hourly_stats'] = {}
+        state.save(data)
+        log('统计数据已重置')
+        sys.exit(0)
+
+    # 处理 --export-events 参数（导出事件日志）
+    if args.export_events:
+        import pathlib
+        import csv
+        # 先加载持久化的计数器（触发 load_counters），再导出 EVENTS（目前是空，仅示例）
+        load_counters()
+        events = list(EVENTS)
+        if not events:
+            log('当前没有事件可导出（程序未运行过，EVENTS 为空）')
+            sys.exit(0)
+        path = pathlib.Path(args.export_events)
+        try:
+            with path.open('w', newline='', encoding='utf-8-sig') as f:
+                writer = csv.writer(f)
+                writer.writerow(['时间', '动作', '类型', '标题', '详情'])
+                for ev in reversed(events):
+                    ts = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(ev['ts']))
+                    action_labels = {
+                        'auto_yes': '✅ 自动确认', 'notify': '🔔 已通知',
+                        'error': '❌ 错误通知', 'idle': '🟠 空闲通知',
+                        'unknown': '⚠️ 未知框',
+                    }
+                    action = action_labels.get(ev['action'], ev['action'])
+                    writer.writerow([ts, action, ev['kind'], ev['title'], ev['detail']])
+            log(f'已导出 {len(events)} 条事件到: {path}')
+        except Exception as e:
+            log(f'导出失败: {e}')
+            sys.exit(1)
+        sys.exit(0)
 
     if sys.stdout is not None:
         try:
@@ -796,6 +918,9 @@ def main():
     # 恢复持久化的统计计数器与单窗口策略（跨重启保留）
     load_counters()
     load_policies()
+
+    # 加载高级过滤规则（从配置读取）
+    filters.load_from_config(config.load())
 
     mode = ' [DRY-RUN：只检测不发键]' if DRY_RUN else ''
 

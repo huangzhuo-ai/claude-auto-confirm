@@ -76,3 +76,39 @@ def get_daily_history(days: int = 7) -> list:
     hist = data.get('daily_history', {})
     sorted_dates = sorted(hist.keys(), reverse=True)[:days]
     return [{'date': d, **hist[d]} for d in sorted_dates]
+
+
+def update_window_stats(window_key: str, action: str):
+    """更新按窗口统计（window_key 如 'WT:PowerShell'，action ∈ auto_yes|notify|error|idle）。
+    累加该窗口该动作的计数。"""
+    data = load()
+    window_stats = data.setdefault('window_stats', {})
+    win_data = window_stats.setdefault(window_key, {'auto_yes': 0, 'notify': 0, 'error': 0, 'idle': 0})
+    if action in win_data:
+        win_data[action] = win_data.get(action, 0) + 1
+    save(data)
+
+
+def get_window_stats() -> dict:
+    """获取按窗口统计，返回 {window_key: {auto_yes, notify, error, idle}}。"""
+    data = load()
+    return data.get('window_stats', {})
+
+
+def update_hourly_stats(hour: int, action: str):
+    """更新按小时统计（hour ∈ 0~23，action ∈ auto_yes|notify|error|idle）。
+    累加该小时该动作的计数。"""
+    data = load()
+    hourly_stats = data.setdefault('hourly_stats', {})
+    hour_key = f'{hour:02d}'  # 格式化为 '00' ~ '23'
+    hour_data = hourly_stats.setdefault(hour_key, {'auto_yes': 0, 'notify': 0, 'error': 0, 'idle': 0})
+    if action in hour_data:
+        hour_data[action] = hour_data.get(action, 0) + 1
+    save(data)
+
+
+def get_hourly_stats() -> dict:
+    """获取按小时统计，返回 {hour_key: {auto_yes, notify, error, idle}}。
+    hour_key 格式 '00' ~ '23'。"""
+    data = load()
+    return data.get('hourly_stats', {})

@@ -245,3 +245,44 @@ def test_daily_history_keeps_only_recent_30_days(tmp_path, monkeypatch):
     # 只保留最近30天
     data = state.load()
     assert len(data.get('daily_history', {})) == 30
+
+
+# ── 按窗口统计 ────────────────────────────────────────────────
+def test_update_window_stats(tmp_path, monkeypatch):
+    """测试按窗口统计更新。"""
+    monkeypatch.setattr(state, '_state_path', lambda: tmp_path / 'state.json')
+    state.update_window_stats('WT:PowerShell', 'auto_yes')
+    state.update_window_stats('WT:PowerShell', 'auto_yes')
+    state.update_window_stats('VSCode:integrated', 'notify')
+
+    stats = state.get_window_stats()
+    assert stats['WT:PowerShell']['auto_yes'] == 2
+    assert stats['VSCode:integrated']['notify'] == 1
+
+
+def test_get_window_stats_empty(tmp_path, monkeypatch):
+    """空统计返回空字典。"""
+    monkeypatch.setattr(state, '_state_path', lambda: tmp_path / 'state.json')
+    stats = state.get_window_stats()
+    assert stats == {}
+
+
+# ── 按小时统计 ────────────────────────────────────────────────
+def test_update_hourly_stats(tmp_path, monkeypatch):
+    """测试按小时统计更新。"""
+    monkeypatch.setattr(state, '_state_path', lambda: tmp_path / 'state.json')
+    state.update_hourly_stats(9, 'auto_yes')
+    state.update_hourly_stats(9, 'auto_yes')
+    state.update_hourly_stats(14, 'notify')
+
+    stats = state.get_hourly_stats()
+    assert stats['09']['auto_yes'] == 2
+    assert stats['14']['notify'] == 1
+
+
+def test_get_hourly_stats_empty(tmp_path, monkeypatch):
+    """空统计返回空字典。"""
+    monkeypatch.setattr(state, '_state_path', lambda: tmp_path / 'state.json')
+    stats = state.get_hourly_stats()
+    assert stats == {}
+

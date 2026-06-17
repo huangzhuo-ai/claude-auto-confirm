@@ -1,0 +1,77 @@
+# claude-auto-confirm 配置文件示例（v0.7.0 新增功能）
+# 修改后重启程序生效
+
+# ===== 基础配置 =====
+# 扫描间隔（秒）。越小响应越快，但 CPU 占用略高
+scan_interval = 1.5
+
+# 「等待你输入」状态持续多久（秒）才发通知。避免 Claude 刚回复完的瞬间误报
+waiting_notify_seconds = 15
+
+# 忽略的窗口：标题中含有以下任一字串的终端，不监控、不通知
+ignored_titles = [
+    # "monitor.py",
+    # "我的私人终端",
+]
+
+# ===== 外观配置 =====
+# 主题：system（跟随系统）| dark（深色）| light（浅色）
+theme = "system"
+
+# 主题色：blue | green | dark-blue
+color = "blue"
+
+# ===== 通知配置 =====
+# 是否启用静默时段
+quiet_hours_enabled = false
+
+# 静默开始时间（支持跨日，如 22:00-08:00）
+quiet_hours_start = "22:00"
+
+# 静默结束时间
+quiet_hours_end = "08:00"
+
+# 通知时是否播放提示音（受静默时段约束）
+sound_enabled = false
+
+# ===== 策略配置 =====
+# 单窗口策略是否持久化（按标题，跨重启套用）
+persist_policies = true
+
+# 额外的错误关键词（除内置外，命中即通知）
+extra_error_keywords = [
+    # "quota exhausted",
+    # "请联系管理员",
+]
+
+# ===== 快捷键配置（v0.7.0 新增）=====
+[hotkeys]
+enabled = true
+pause_resume = "ctrl+alt+p"
+open_panel = "ctrl+alt+c"
+mute_hotkeys = "ctrl+alt+m"
+
+# ===== 高级过滤规则（v0.7.0 新增）=====
+# 规则按优先级排序（priority 越小越优先）
+# type: "title_regex"（标题正则）| "content_contains"（内容关键词）
+# action: "auto"（自动确认）| "notify"（仅通知）| "ignore"（忽略）
+
+# 示例 1：测试环境的窗口只通知，不自动确认
+# [[filters]]
+# id = "test-env"
+# enabled = true
+# type = "title_regex"
+# pattern = ".*test.*"
+# action = "notify"
+# priority = 1
+# keywords = []
+
+# 示例 2：包含 "production" 的屏幕内容改为通知
+# [[filters]]
+# id = "prod-content"
+# enabled = true
+# type = "content_contains"
+# pattern = ""
+# action = "notify"
+# priority = 2
+# keywords = ["production", "deploy"]

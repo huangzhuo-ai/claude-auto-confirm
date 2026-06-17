@@ -1,11 +1,12 @@
 """
 系统托盘界面：主线程跑 pystray 托盘，monitor.scan_loop() 在子线程运行。
-右键菜单：状态行 / 打开面板 / 暂停·恢复 / 退出。
+右键菜单：状态行 / 打开面板 / 暂停·恢复 / 配置方案 / 退出。
 """
 import threading
 import pystray
 from PIL import Image
 import monitor
+import hotkeys
 from applog import log
 
 
@@ -95,8 +96,28 @@ def _open_panel(_icon, _item):
 
 def _quit(icon, _item):
     monitor.cancel_pause_timer()
+    hotkeys.stop()  # 停止热键监听
     _stop.set()
     icon.stop()
+
+
+def _switch_profile(icon, item, profile_name):
+    """切配置方案。重新加载配置后，需要重新加载过滤规则。"""
+    import profiles
+    import config
+    import filters
+    if profiles.switch_profile(profile_name):
+        # 重新加载配置和过滤规则
+        cfg = config.load()
+        filters.load_from_config(cfg)
+        log(f'[tray] 已切换到方案: {profile_name}')
+        icon.update_menu()  # 刷新菜单（更新选中状态）
+
+
+def _current_profile(_item) -> str:
+    """返回当前方案名（用于菜单显示）。"""
+    import profiles
+    return profiles.get_current_profile()
 
 
 def run(dry_run: bool = False):
@@ -105,12 +126,62 @@ def run(dry_run: bool = False):
         target=monitor.scan_loop, args=(_stop,), daemon=True)
     t.start()
 
+    # 启动全局快捷键监听
+    hotkeys.start()
+
+    # 注册快捷键回调
+    def _hotkey_pause_resume():
+        if monitor.PAUSED.is_set():
+            monitor.cancel_pause_timer()
+            monitor.PAUSED.clear()
+            log('[hotkey] 已恢复监控')
+        else:
+            monitor.PAUSED.set()
+            log('[hotkey] 已暂停监控')
+
+    def _hotkey_open_panel():
+        import panel
+        panel.open_panel()
+        log('[hotkey] 打开面板')
+
+    def _hotkey_mute():
+        hotkeys.toggle_mute()
+
+    hotkeys.register('pause_resume', _hotkey_pause_resume)
+    hotkeys.register('open_panel', _hotkey_open_panel)
+    hotkeys.register('mute_hotkeys', _hotkey_mute)
+
     # 预热面板窗口（隐藏构建），让首次双击托盘瞬间打开
     try:
         import panel
         panel.prewarm_panel()
     except Exception:
         pass
+
+    # 构建配置方案子菜单
+    import profiles
+    profile_items = []
+    current = profiles.get_current_profile()
+    for pname in profiles.list_profiles():
+        # 为每个方案创建独立的 action 和 checked 函数（避免闭包陷阱）
+        def make_action(profile_name):
+            def _action(icon, item):
+                _switch_profile(icon, item, profile_name)
+            return _action
+
+        def make_checked(profile_name):
+            def _checked(item):
+                return profiles.get_current_profile() == profile_name
+            return _checked
+
+        profile_items.append(
+            pystray.MenuItem(
+                pname,
+                make_action(pname),
+                checked=make_checked(pname),
+                radio=True,
+            )
+        )
 
     menu = pystray.Menu(
         pystray.MenuItem(_status_text, None, enabled=False),
@@ -119,10 +190,11 @@ def run(dry_run: bool = False):
         pystray.MenuItem('打开面板', _open_panel, default=True),
         pystray.MenuItem('暂停', _toggle_pause, checked=_is_paused),
         pystray.MenuItem('定时暂停', pystray.Menu(
-            pystray.MenuItem('暂停 30 分钟', lambda icon, _i: _pause_for(icon, 30)),
-            pystray.MenuItem('暂停 1 小时', lambda icon, _i: _pause_for(icon, 60)),
-            pystray.MenuItem('暂停 2 小时', lambda icon, _i: _pause_for(icon, 120)),
+            pystray.MenuItem('暂停 30 分钟', lambda icon, item: _pause_for(icon, 30)),
+            pystray.MenuItem('暂停 1 小时', lambda icon, item: _pause_for(icon, 60)),
+            pystray.MenuItem('暂停 2 小时', lambda icon, item: _pause_for(icon, 120)),
         )),
+        pystray.MenuItem('配置方案', pystray.Menu(*profile_items)) if profile_items else None,
         pystray.MenuItem('开机自启', _toggle_autostart, checked=_is_autostart),
         pystray.MenuItem('退出', _quit),
     )
