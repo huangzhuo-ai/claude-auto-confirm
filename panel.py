@@ -162,6 +162,78 @@ def _build_monitor_page(frame):
 
         _stats_labels['trend_bars'].append((date_lbl, bar, count_lbl))
 
+    # 高级图表视图区域（新增）
+    chart_section = ctk.CTkFrame(frame)
+    chart_section.pack(fill='both', expand=True, pady=(0, 12))
+
+    # 图表视图切换按钮
+    chart_toolbar = ctk.CTkFrame(chart_section, fg_color='transparent')
+    chart_toolbar.pack(fill='x', padx=10, pady=8)
+    ctk.CTkLabel(chart_toolbar, text='📈 图表视图：',
+                 font=ctk.CTkFont(size=11, weight='bold')).pack(side='left', padx=(0, 6))
+
+    # 图表容器（用于切换不同图表）- 移除固定高度，让内容自适应
+    chart_container = ctk.CTkFrame(chart_section)
+    chart_container.pack(fill='both', expand=True, padx=10, pady=(0, 8))
+
+    # 存储当前图表画布，用于切换时销毁旧图表
+    current_chart = [None]
+
+    def _show_chart(chart_type):
+        """切换显示不同的图表"""
+        # 销毁旧图表
+        if current_chart[0]:
+            try:
+                current_chart[0].get_tk_widget().destroy()
+            except Exception:
+                pass
+
+        # 清空容器
+        for widget in chart_container.winfo_children():
+            widget.destroy()
+
+        # 创建新图表
+        try:
+            import charts
+            if chart_type == '30day_trend':
+                canvas = charts.create_trend_chart(chart_container, days=30)
+            elif chart_type == 'distribution':
+                canvas = charts.create_distribution_pie(chart_container)
+            elif chart_type == 'by_window':
+                canvas = charts.create_window_bar_chart(chart_container, top_n=10)
+            elif chart_type == 'hourly':
+                canvas = charts.create_hourly_heatmap(chart_container)
+            else:
+                # 隐藏图表区域
+                chart_container.pack_forget()
+                return
+            current_chart[0] = canvas
+            chart_container.pack(fill='both', expand=True, padx=10, pady=(0, 8))
+        except Exception as e:
+            import applog
+            applog.log(f'[panel] 图表加载失败: {e}')
+            error_label = ctk.CTkLabel(chart_container,
+                                      text=f'图表加载失败: {e}',
+                                      text_color='red')
+            error_label.pack(expand=True)
+
+    # 图表切换按钮
+    chart_buttons = [
+        ('30天趋势', '30day_trend'),
+        ('动作分布', 'distribution'),
+        ('按窗口', 'by_window'),
+        ('按小时', 'hourly'),
+        ('隐藏图表', 'none'),
+    ]
+
+    for label, chart_type in chart_buttons:
+        ctk.CTkButton(chart_toolbar, text=label, width=80,
+                      command=lambda ct=chart_type: _show_chart(ct)
+                      ).pack(side='left', padx=3)
+
+    # 默认隐藏图表区域（节省空间）
+    chart_container.pack_forget()
+
     # 策略按钮栏
     bar = ctk.CTkFrame(frame, fg_color='transparent')
     bar.pack(fill='x', pady=(0, 8))
@@ -331,6 +403,11 @@ def _build_log_page(frame):
     ctk.CTkLabel(header, text='事件日志',
                  font=ctk.CTkFont(size=14, weight='bold')).pack(side='left')
 
+    # 实时模式开关（新增）
+    realtime_switch = ctk.CTkSwitch(header, text='🔴 实时模式')
+    realtime_switch.pack(side='left', padx=(16, 0))
+    _stats_labels['log_realtime'] = realtime_switch  # 存储开关状态
+
     btn_bar = ctk.CTkFrame(header, fg_color='transparent')
     btn_bar.pack(side='right')
     ctk.CTkButton(btn_bar, text='📁 日志目录', width=92,
@@ -345,21 +422,74 @@ def _build_log_page(frame):
     _log_box.configure(state='disabled')
 
 
+# 存储上次事件数量，用于高亮新事件
+_log_last_count = [0]
+
 def _refresh_log():
     if _log_box is None:
         return
+
     events = list(monitor.EVENTS)
-    if events == _log_snapshot[0]:
+
+    # 检查是否启用实时模式
+    realtime_enabled = False
+    if 'log_realtime' in _stats_labels:
+        realtime_enabled = _stats_labels['log_realtime'].get()
+
+    # 非实时模式且事件未变化，不刷新
+    if not realtime_enabled and events == _log_snapshot[0]:
         return
+
+    # 计算新增事件数量
+    new_event_count = len(events) - _log_last_count[0]
+    _log_last_count[0] = len(events)
+
     _log_snapshot[0] = events
     _log_box.configure(state='normal')
     _log_box.delete('1.0', 'end')
-    for ev in reversed(events):
+
+    # 事件类型图标和颜色映射
+    action_styles = {
+        'auto_yes': ('✅', '#4CAF50'),
+        'notify': ('🔔', '#FFC107'),
+        'error': ('❌', '#F44336'),
+        'idle': ('🟠', '#FF9800'),
+        'unknown': ('❓', '#9E9E9E'),
+    }
+
+    for idx, ev in enumerate(reversed(events)):
         ts = time.strftime('%H:%M:%S', time.localtime(ev['ts']))
-        action = _ACTION_LABELS.get(ev['action'], ev['action'])
-        _log_box.insert('end',
-            f"{ts}  {action:<12}  [{ev['kind']}] {ev['title'][:35]}  {ev['detail'][:60]}\n")
+        action = ev['action']
+        icon, color = action_styles.get(action, ('•', 'gray'))
+        action_label = _ACTION_LABELS.get(action, action)
+
+        # 新事件高亮（最近的new_event_count条）
+        is_new = realtime_enabled and idx < new_event_count
+
+        line_text = f"{ts}  {icon} {action_label:<10}  [{ev['kind']}] {ev['title'][:35]}  {ev['detail'][:60]}\n"
+
+        # 插入文本
+        start_idx = _log_box.index('end-1c')
+        _log_box.insert('end', line_text)
+        end_idx = _log_box.index('end-1c')
+
+        # 应用颜色标签
+        tag_name = f'color_{action}'
+        _log_box.tag_config(tag_name, foreground=color)
+        _log_box.tag_add(tag_name, start_idx, end_idx)
+
+        # 新事件高亮背景（0.5秒后会消失的效果由下次刷新实现）
+        if is_new:
+            highlight_tag = f'highlight_{idx}'
+            _log_box.tag_config(highlight_tag, background='#3d3d3d')
+            _log_box.tag_add(highlight_tag, start_idx, end_idx)
+
     _log_box.configure(state='disabled')
+
+    # 实时模式：自动滚动到底部
+    if realtime_enabled:
+        _log_box.see('end')
+
 
 
 def _build_settings_page(frame):
@@ -777,7 +907,9 @@ def _run_panel():
     root = ctk.CTk()
     _root = root
     root.title('Claude Auto-Yes · 状态面板')
-    root.geometry('900x560')
+    root.geometry('900x700')  # 增加默认高度以容纳图表
+    root.minsize(800, 600)    # 设置最小尺寸
+    root.resizable(True, True)  # 允许调整大小
 
     # 设置窗口图标（任务栏/Alt-Tab 显示）：用 AI 生成的品牌图标
     # 必须用 iconbitmap（不是 iconphoto），这样会设置 customtkinter 的
